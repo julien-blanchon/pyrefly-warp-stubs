@@ -1,31 +1,36 @@
 """A two-layer MLP forward pass with Warp tiles, shape-checked by Pyrefly.
 
-Hover any tile in an editor running Pyrefly to see its shape. The
-`if TYPE_CHECKING:` block inside the kernel pins shapes with `assert_type`:
-Pyrefly checks it, and Warp drops it when building the kernel because the
-condition is a compile-time constant. Swapping the operands of the first
-`wp.tile_matmul` is reported before the kernel is ever built:
+Shows: tile shapes inferred inside a kernel, in-kernel checks under
+`if TYPE_CHECKING:` (Warp drops that block when building the kernel), and a
+typed host function that carries the input and output shapes. Kernel
+signatures stay plain Warp (`wp.array2d[float]`); shapes live on the host
+function, where Pyrefly checks every call:
 
-    Argument `Tile[float, [64, 16]]` is not assignable to parameter `b` with
-    type `Tile[Any, [32, @_]]` in function `warp.tile_matmul`
+    mlp_forward(x, w1, b0, w0, b1)   # w0 and w1 swapped
+    # error: Argument `array[float, [3, 64]]` is not assignable to parameter
+    #        `w0` with type `array[float, [64, 16]]`
+
+No Pyrefly package is needed to run this file: shape types appear only in
+annotations (deferred by the `__future__` import) and `TYPE_CHECKING` blocks.
 
 Run it with `python examples/tile_mlp.py` (CPU is fine).
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, assert_type
+from typing import TYPE_CHECKING
 
 import numpy as np
 import warp as wp
 
 if TYPE_CHECKING:
-    from warp import Tile
+    from shape_extensions import IntVar
+    from warp.shape_checks import expect_shape
 
 DIM_IN = wp.constant(16)
 DIM_HID = 64
 DIM_OUT = 3
-BATCH = 32
+TILE_BATCH = 32  # samples handled by one block
 
 
 @wp.func
@@ -34,7 +39,7 @@ def relu(x: float) -> float:
 
 
 @wp.kernel
-def mlp_forward(
+def mlp_kernel(
     x: wp.array2d[float],
     w0: wp.array2d[float],
     b0: wp.array2d[float],
@@ -42,40 +47,61 @@ def mlp_forward(
     b1: wp.array2d[float],
     out: wp.array2d[float],
 ):
-    inputs = wp.tile_load(x, shape=(DIM_IN, BATCH))  # [16, 32]
-    weights0 = wp.tile_load(w0, shape=(DIM_HID, DIM_IN))  # [64, 16]
-    bias0 = wp.tile_load(b0, shape=(DIM_HID, 1))  # [64, 1]
+    i = wp.tid()
+    inputs = wp.tile_load(x, shape=(DIM_IN, TILE_BATCH), offset=(0, i * TILE_BATCH))
+    weights0 = wp.tile_load(w0, shape=(DIM_HID, DIM_IN))
+    bias0 = wp.tile_load(b0, shape=(DIM_HID, 1))
     # Tiles never broadcast implicitly: `+ bias0` alone would be a shape error.
     hidden = wp.tile_map(
-        relu, wp.tile_matmul(weights0, inputs) + wp.tile_broadcast(bias0, shape=(DIM_HID, BATCH))
-    )  # [64, 32]
+        relu, wp.tile_matmul(weights0, inputs) + wp.tile_broadcast(bias0, shape=(DIM_HID, TILE_BATCH))
+    )
 
-    weights1 = wp.tile_load(w1, shape=(DIM_OUT, DIM_HID))  # [3, 64]
-    bias1 = wp.tile_load(b1, shape=(DIM_OUT, 1))  # [3, 1]
-    output = wp.tile_matmul(weights1, hidden) + wp.tile_broadcast(bias1, shape=(DIM_OUT, BATCH))  # [3, 32]
+    weights1 = wp.tile_load(w1, shape=(DIM_OUT, DIM_HID))
+    bias1 = wp.tile_load(b1, shape=(DIM_OUT, 1))
+    output = wp.tile_matmul(weights1, hidden) + wp.tile_broadcast(bias1, shape=(DIM_OUT, TILE_BATCH))
     if TYPE_CHECKING:
-        assert_type(inputs, Tile[float, [16, 32]])
-        assert_type(hidden, Tile[Any, [64, 32]])
-        assert_type(output, Tile[float, [3, 32]])
-    wp.tile_store(out, output)
+        expect_shape(inputs, (DIM_IN, TILE_BATCH))
+        expect_shape(hidden, (DIM_HID, TILE_BATCH))
+        expect_shape(output, (DIM_OUT, TILE_BATCH))
+    wp.tile_store(out, output, offset=(0, i * TILE_BATCH))
+
+
+# Annotations need literal sizes (Pyrefly cannot read module constants there);
+# the batch `B` is generic and flows to the result.
+def mlp_forward[B: IntVar](
+    x: wp.array[float, [16, B]],
+    w0: wp.array[float, [64, 16]],
+    b0: wp.array[float, [64, 1]],
+    w1: wp.array[float, [3, 64]],
+    b1: wp.array[float, [3, 1]],
+) -> wp.array[float, [3, B]]:
+    """Apply the MLP to `B` samples (columns of `x`); `B` must be a multiple of 32."""
+    out = wp.zeros((DIM_OUT, x.shape[1]), dtype=float, device=x.device)
+    wp.launch_tiled(
+        mlp_kernel, dim=x.shape[1] // TILE_BATCH, inputs=[x, w0, b0, w1, b1, out], block_dim=64, device=x.device
+    )
+    return out
 
 
 def main() -> None:
     rng = np.random.default_rng(0)
-    x = rng.standard_normal((DIM_IN, BATCH)).astype(np.float32)
-    w0 = rng.standard_normal((DIM_HID, DIM_IN)).astype(np.float32)
-    b0 = rng.standard_normal((DIM_HID, 1)).astype(np.float32)
-    w1 = rng.standard_normal((DIM_OUT, DIM_HID)).astype(np.float32)
-    b1 = rng.standard_normal((DIM_OUT, 1)).astype(np.float32)
-
     device = "cpu"
-    out = wp.zeros((DIM_OUT, BATCH), dtype=float, device=device)
-    arrays = [wp.array(v, dtype=float, device=device) for v in (x, w0, b0, w1, b1)]
-    wp.launch_tiled(mlp_forward, dim=1, inputs=[*arrays, out], block_dim=64, device=device)
+    batch = 4 * TILE_BATCH
 
-    expected = w1 @ np.maximum(w0 @ x + b0, 0.0) + b1
-    np.testing.assert_allclose(out.numpy(), expected, rtol=1e-4, atol=1e-4)
-    print("ok: output", out.shape, "matches NumPy")
+    # Allocating with shapes, then filling, keeps the shapes known to Pyrefly.
+    x = wp.empty((DIM_IN, batch), dtype=float, device=device)
+    w0 = wp.empty((DIM_HID, DIM_IN), dtype=float, device=device)
+    b0 = wp.empty((DIM_HID, 1), dtype=float, device=device)
+    w1 = wp.empty((DIM_OUT, DIM_HID), dtype=float, device=device)
+    b1 = wp.empty((DIM_OUT, 1), dtype=float, device=device)
+    for a in (x, w0, b0, w1, b1):
+        a.assign(rng.standard_normal(a.shape).astype(np.float32))
+
+    y = mlp_forward(x, w0, b0, w1, b1)  # array[float, [3, 128]]
+
+    expected = w1.numpy() @ np.maximum(w0.numpy() @ x.numpy() + b0.numpy(), 0.0) + b1.numpy()
+    np.testing.assert_allclose(y.numpy(), expected, rtol=1e-4, atol=1e-4)
+    print("ok: output", y.shape, "matches NumPy")
 
 
 if __name__ == "__main__":

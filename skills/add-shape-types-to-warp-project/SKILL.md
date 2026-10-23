@@ -172,8 +172,18 @@ without the user's approval.
   quote the type (`assert_type(x, "wp.array[Any, [N, 3]]")`) or sit under
   `if TYPE_CHECKING:`. Unquoted, Python evaluates `wp.array[Any, [N, 3]]` when
   the line runs and Warp raises `TypeError: ndim must be an integer`.
+- **Typed launchers carry the kernel's input shapes.** Kernel signatures stay
+  plain Warp and `wp.launch(inputs=[...])` is unchecked, so give the host
+  function that launches the kernel the shapes, with named dimensions as type
+  parameters: `def matmul[M: IntVar, K: IntVar, N: IntVar](a: wp.array[float, [M, K]], b: wp.array[float, [K, N]]) -> wp.array[float, [M, N]]`.
+  Build outputs from the inputs' shapes (`wp.zeros((a.shape[0], b.shape[1]))`)
+  so the result type follows. Annotations need literal sizes or type
+  parameters (not module constants). See `examples/` in the stubs repository.
 - Bind sizes from integer parameters with `count: Int[N]`, for example
-  `def particles[N: IntVar](count: Int[N]) -> wp.array[Any, [N, 3]]`.
+  `def particles[N: IntVar](count: Int[N]) -> wp.array[float, [N, 3]]`.
+- Allocate with a shape and fill (`a = wp.empty((64, 16), dtype=float); a.assign(np_data)`)
+  rather than `wp.array(np_data)` when the NumPy data's shape is unknown to the
+  checker: the shape then stays known.
 - Remove temporary `reveal_type` probes.
 - Mind contributors without the stubs: other checkers (and Pyrefly without
   `pyrefly-warp-stubs`) report in-kernel `assert_type`/`Tile[...]` checkpoints as

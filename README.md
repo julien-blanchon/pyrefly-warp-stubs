@@ -107,6 +107,60 @@ normalize(wp.zeros((10, 3), dtype=float))         # error: array[float, [10, 3]]
 all of this step by step, and `verify_port.py`, a lint for these runtime rules
 (Pyrefly cannot see them).
 
+### Shapes on kernel inputs: typed launchers
+
+Kernel signatures must stay plain Warp, and `wp.launch(inputs=[...])` is not
+checked against them. Put the shapes on the host function that launches the
+kernel; Pyrefly then checks every call, and the dimensions flow to the result:
+
+```python
+def matmul[M: IntVar, K: IntVar, N: IntVar](
+    a: wp.array[float, [M, K]], b: wp.array[float, [K, N]]
+) -> wp.array[float, [M, N]]:
+    c = wp.zeros((a.shape[0], b.shape[1]), dtype=float)   # array[float, [M, N]]
+    wp.launch_tiled(gemm_kernel, dim=..., inputs=[a, b, c], block_dim=64)
+    return c
+
+matmul(wp.empty((64, 32)), wp.empty((32, 48)))   # array[float, [64, 48]]
+matmul(wp.empty((32, 48)), wp.empty((64, 32)))   # error: expected [48, @_]
+```
+
+### Named dimensions (`B C H W`)
+
+Named dimensions are type parameters. Three spellings check the same way:
+
+| Spelling | Needs at runtime |
+|---|---|
+| `def f[B: IntVar, C: IntVar, H: IntVar, W: IntVar](x: wp.array[float, [B, C, H, W]])` | nothing (`IntVar` imported under `TYPE_CHECKING`) |
+| `@shape_vars("B, C, H, W")` and `Shaped[wp.array[float], "[B, C, H, W]"]` | `pyrefly-shape-extensions` |
+| `@static_jaxtyping("B C H W")` and `Float[wp.array, "B C H W"]` | `jaxtyping` and `pyrefly-shape-extensions` (no dtype) |
+
+Arithmetic on them is tracked: `x.reshape((x.shape[0], x.shape[1], -1))` on a
+`[B, C, H, W]` array is `[B, C, H * W]` (see `examples/image_batch.py`).
+
+### Libraries: a `typing` extra
+
+If your library uses Warp and wants its users to get the shape types too, offer
+the stubs as an **extra**, not only a dev dependency: dependency groups
+(PEP 735) are never published, extras are.
+
+```toml
+[project.optional-dependencies]
+typing = ["pyrefly-warp-stubs>=0.1"]       # users opt in: pip install mylib[typing]
+
+[dependency-groups]
+dev = ["mylib[typing]", "pyrefly>=1.4", "pytest"]   # contributors get it by default
+
+[tool.uv.sources]                          # not published: where *you* get it from
+pyrefly-warp-stubs = { git = "https://github.com/julien-blanchon/pyrefly-warp-subs" }
+```
+
+A plain `pip install mylib` still installs only Warp. The published metadata
+must name the package (`pyrefly-warp-stubs>=0.1`): build backends refuse git
+URLs in `optional-dependencies` and PyPI rejects them, so the extra only works
+for your users once `pyrefly-warp-stubs` is on PyPI. Until then, keep it in the
+dev group with the `[tool.uv.sources]` entry above.
+
 ## What is tracked
 
 | Area | Examples |
@@ -130,6 +184,20 @@ tracked; sizes only known at runtime become `int` dimensions, which keep the ran
 
 Every operator and rule above was checked against what Warp 1.18 actually
 builds, by compiling kernels on the CPU; the tests keep it that way.
+
+## Examples
+
+Each example runs on the CPU (`python examples/<name>.py`), checks its result
+against NumPy, and type-checks cleanly; its docstring lists errors Pyrefly
+reports for typical mistakes (all verified by the test suite or by hand).
+
+| Example | Shows |
+|---|---|
+| `tile_mlp.py` | tile matmul/broadcast/map, `expect_shape` in a kernel, a typed launcher generic in the batch size |
+| `blocked_matmul.py` | tile offsets, `tile_matmul(a, b, out)` accumulation, `[M, K] @ [K, N] -> [M, N]` |
+| `row_softmax.py` | axis reductions, `tile_reshape`, explicit `tile_broadcast`, element-wise tile math |
+| `image_batch.py` | named dimensions `B, C, H, W`, symbolic `H * W`, views, a 4-D launch |
+| `particles.py` | `vec3`/`mat33` arithmetic, scalar rules, class-level array declarations, a shared `N` |
 
 ## How it works
 
@@ -217,6 +285,9 @@ and four from a Pyrefly bug (below). See `tools/compare_examples.py`.
 - Typing lets `int` pass where `float` is expected, so `wp.int32` (which is
   `int`) tiles reach float-only tile operations, and `wp.max(f32, 1)` passes;
   Warp rejects both. Other integer types (`wp.int64`, `wp.uint32`, ...) are caught.
+- A list literal passed inline as an argument (`f(wp.array([0.5, 0.5]))`) is
+  typed from the expected parameter and not checked against it; assigned to a
+  variable first, it is.
 - `.w` on a 3-vector is not caught; the length from
   `wp.types.vector(length=5, ...)` is widened to `int`.
 - `@wp.func` overloading by redefinition in *your* code: the checker sees the
