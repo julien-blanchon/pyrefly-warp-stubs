@@ -16,14 +16,14 @@ import struct
 import sys
 import types
 import zlib
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Mapping
 from typing import Any, Literal, Protocol, Self, TypeAlias, TypeVar, overload
 from typing import TYPE_CHECKING, ClassVar, Generic, NamedTuple, Union, get_args, get_origin
 import numpy as np
 import warp
 import warp.config
 from warp._src.logger import log_warning
-from collections.abc import Iterator
 from shape_extensions import Flag, Index, IntTuple, IntTupleOrList, IntVar, RegularNestedList, index_shape
 from shape_extensions import Int as _Int
 from warp._shapes import flatten_shape, reshape_int_shape, reshape_shape, reverse_shape, transpose_shape
@@ -968,7 +968,7 @@ class MeshQueryAABBTiled:
     """Object used to track state during thread-block parallel mesh traversal."""
     _wp_native_name_ = 'mesh_query_aabb_thread_block_t'
 
-class HashGridQuery:
+class HashGridQuery[D = float32]:
     """Object used to track state during :class:`warp.HashGrid` neighbor traversal.
 
     Query objects are returned by :func:`warp.hash_grid_query`; users normally do not construct them directly.
@@ -2827,42 +2827,12 @@ class array[DType, Shape: IntTuple = IntTuple](Array[DType, Shape]):
         else:
             warp.copy(self, array(data=src, dtype=self.dtype, copy=False, device='cpu'))
 
-    def numpy(self, *, _suppress_bfloat16_warning=False):
+    def numpy(self, *, _suppress_bfloat16_warning: builtins.bool=False) -> np.ndarray[tuple[builtins.int, ...], np.dtype[Any]]:
         """Convert the array to a :class:`numpy.ndarray` (aliasing memory through the array interface protocol)
         If the array is on the GPU, a synchronous device-to-host copy (on the CUDA default stream) will be
         automatically performed to ensure that any outstanding work is completed.
         """
-        is_bf16 = self.dtype is bfloat16 or (isinstance(self.dtype, type) and issubclass(self.dtype, ctypes.Array) and (self.dtype._wp_scalar_type_ is bfloat16))
-        if is_bf16 and (not _suppress_bfloat16_warning):
-            ml_bf16 = _get_ml_dtypes_bfloat16()
-            if ml_bf16 is None:
-                log_warning('bfloat16 arrays are returned as np.uint16 (raw bit representation) because NumPy does not natively support bfloat16. Use wp.to_torch() or wp.to_jax() for frameworks that support bfloat16 natively, or install ml-dtypes for a NumPy bfloat16 dtype.', once=True)
-        if self.ptr:
-            with warp.ScopedStream(self.device.null_stream):
-                a = self.to('cpu', requires_grad=False)
-            result = np.asarray(a)
-        else:
-            if isinstance(self.dtype, warp._src.codegen.Struct):
-                npdtype = self.dtype.numpy_dtype()
-                npshape = self.shape
-            elif is_native_type(self.dtype):
-                if self.dtype._wp_native_type_.fields is None:
-                    npdtype = np.dtype(f'V{ctypes.sizeof(self.dtype)}')
-                else:
-                    npdtype = np.dtype(self.dtype)
-                npshape = self.shape
-            elif issubclass(self.dtype, ctypes.Array):
-                npdtype = warp_type_to_np_dtype[self.dtype._wp_scalar_type_]
-                npshape = (*self.shape, *self.dtype._shape_)
-            else:
-                npdtype = warp_type_to_np_dtype[self.dtype]
-                npshape = self.shape
-            result = np.empty(npshape, dtype=npdtype)
-        if is_bf16:
-            ml_bf16 = _get_ml_dtypes_bfloat16()
-            if ml_bf16 is not None:
-                result = result.view(ml_bf16)
-        return result
+        ...
 
     def cptr(self):
         """Return a ctypes cast of the array address.
@@ -2887,30 +2857,9 @@ class array[DType, Shape: IntTuple = IntTuple](Array[DType, Shape]):
         p._ref = self
         return p
 
-    def list(self):
+    def list(self) -> builtins.list[Any]:
         """Return a flattened list of items in the array as a Python list."""
-        a = self.numpy(_suppress_bfloat16_warning=True)
-        if isinstance(self.dtype, warp._src.codegen.Struct):
-            a = a.flatten()
-            data = a.ctypes.data
-            stride = a.strides[0]
-            return [self.dtype.from_ptr(data + i * stride) for i in range(self.size)]
-        elif is_native_type(self.dtype):
-            a = a.flatten()
-            stride = a.strides[0]
-            return [self.dtype.from_buffer_copy(a, i * stride) for i in range(self.size)]
-        elif issubclass(self.dtype, ctypes.Array):
-            a = a.reshape((self.size, *self.dtype._shape_))
-            data = a.ctypes.data
-            stride = a.strides[0]
-            return [self.dtype.from_ptr(data + i * stride) for i in range(self.size)]
-        elif self.dtype is bfloat16:
-            ml_bf16 = _get_ml_dtypes_bfloat16()
-            if ml_bf16 is not None:
-                return [bfloat16(float(x)) for x in a.flatten()]
-            return [bfloat16(bfloat16_bits_to_float(int(x))) for x in a.flatten()]
-        else:
-            return a.flatten().tolist()
+        ...
 
     def to(self, device: warp.DeviceLike, requires_grad: builtins.bool | None=None) -> array[DType, Shape]:
         """Return a Warp array with this array's data moved to the specified device, no-op if already on device."""
@@ -3245,7 +3194,7 @@ class indexedarray[DType, Shape: IntTuple = IntTuple](noncontiguous_array_base[D
         """Support ``wp.indexedarray[dtype]`` and ``wp.indexedarray[dtype, Literal[ndim]]`` syntax."""
         return _parse_array_subscript(cls, params)
 
-    def __init__(self, data: array | None=None, indices: array | list[array] | None=None, dtype=None, ndim: int | None=None):
+    def __init__(self, data: array | None=None, indices: array | Sequence[array | None] | None=None, dtype=None, ndim: int | None=None):
         super().__init__(ARRAY_TYPE_INDEXED)
         if dtype is not None:
             if dtype is int:
@@ -3309,10 +3258,26 @@ class indexedarray[DType, Shape: IntTuple = IntTuple](noncontiguous_array_base[D
         if indexedarray._vars is None:
             indexedarray._vars = {'shape': warp._src.codegen.Var('shape', shape_t)}
         return indexedarray._vars
-indexedarray1d: TypeAlias = indexedarray[_ArrayDType, [int]]
-indexedarray2d: TypeAlias = indexedarray[_ArrayDType, [int, int]]
-indexedarray3d: TypeAlias = indexedarray[_ArrayDType, [int, int, int]]
-indexedarray4d: TypeAlias = indexedarray[_ArrayDType, [int, int, int, int]]
+
+def indexedarray1d(*args, **kwargs):
+    """Create or annotate a 1-dimensional :class:`warp.indexedarray`."""
+    kwargs['ndim'] = 1
+    return indexedarray(*args, **kwargs)
+
+def indexedarray2d(*args, **kwargs):
+    """Create or annotate a 2-dimensional :class:`warp.indexedarray`."""
+    kwargs['ndim'] = 2
+    return indexedarray(*args, **kwargs)
+
+def indexedarray3d(*args, **kwargs):
+    """Create or annotate a 3-dimensional :class:`warp.indexedarray`."""
+    kwargs['ndim'] = 3
+    return indexedarray(*args, **kwargs)
+
+def indexedarray4d(*args, **kwargs):
+    """Create or annotate a 4-dimensional :class:`warp.indexedarray`."""
+    kwargs['ndim'] = 4
+    return indexedarray(*args, **kwargs)
 from warp._src.fabric import fabricarray, fabricarray_t, indexedfabricarray, indexedfabricarray_t
 array_types = (array, indexedarray, fabricarray, indexedfabricarray, fixedarray)
 
@@ -4091,12 +4056,9 @@ class Volume:
         except (TypeError, AttributeError):
             pass
 
-    def array(self) -> array:
+    def array(self) -> _VolumeArray[uint8, [int]]:
         """Return the raw memory buffer of the :class:`Volume` as an array."""
-        buf = ctypes.c_void_p(0)
-        size = ctypes.c_uint64(0)
-        self.runtime.core.wp_volume_get_buffer_info(self.id, ctypes.byref(buf), ctypes.byref(size))
-        return array(ptr=buf.value, dtype=uint8, shape=size.value, device=self.device)
+        ...
 
     def get_tile_count(self) -> int:
         """Return the number of tiles (NanoVDB leaf nodes) of the volume."""
@@ -4104,7 +4066,7 @@ class Volume:
         self.runtime.core.wp_volume_get_tile_and_voxel_count(self.id, ctypes.byref(tile_count), ctypes.byref(voxel_count))
         return tile_count.value
 
-    def get_tiles(self, out: array | None=None) -> array:
+    def get_tiles(self, out: _VolumeArray | None=None) -> _VolumeArray[int32, [int, 3]]:
         """Return the integer coordinates of all allocated tiles for this volume.
 
         Args:
@@ -4113,20 +4075,7 @@ class Volume:
                 of ``tile_count`` ``vec3i`` or ``tile_count x 3`` ``int32``
                 on the same device as this volume.
         """
-        if self.id == 0:
-            raise RuntimeError('Invalid Volume')
-        tile_count = self.get_tile_count()
-        if out is None:
-            out = warp.empty(dtype=int32, shape=(tile_count, 3), device=self.device)
-        elif out.device != self.device or out.shape[0] < tile_count:
-            raise RuntimeError(f"'out' array must an array with at least {tile_count} rows on device {self.device}")
-        elif not _is_contiguous_vec_like_array(out, vec_length=3, scalar_types=(int32,)):
-            raise RuntimeError("'out' must be a contiguous 1D array with type vec3i or a 2D array of type int32 with shape (N, 3) ")
-        if self.device.is_cpu:
-            self.runtime.core.wp_volume_get_tiles_host(self.id, out.ptr)
-        else:
-            self.runtime.core.wp_volume_get_tiles_device(self.id, out.ptr)
-        return out
+        ...
 
     def get_voxel_count(self) -> int:
         """Return the total number of allocated voxels for this volume"""
@@ -4152,7 +4101,7 @@ class Volume:
         self.runtime.core.wp_volume_get_active_stats(self.id, ctypes.byref(voxel_count), ctypes.byref(leaf_count), ctypes.byref(lower_count), ctypes.byref(upper_count))
         return Volume.ActiveStats(voxel_count.value, leaf_count.value, lower_count.value, upper_count.value)
 
-    def get_voxels(self, out: array | None=None) -> array:
+    def get_voxels(self, out: _VolumeArray | None=None) -> _VolumeArray[int32, [int, 3]]:
         """Return the integer coordinates of all allocated voxels for this volume.
 
         Args:
@@ -4160,20 +4109,7 @@ class Volume:
                 a new array will be allocated. `out` must be a contiguous array of ``voxel_count`` ``vec3i`` or ``voxel_count x 3`` ``int32``
                 on the same device as this volume.
         """
-        if self.id == 0:
-            raise RuntimeError('Invalid Volume')
-        voxel_count = self.get_voxel_count()
-        if out is None:
-            out = warp.empty(dtype=int32, shape=(voxel_count, 3), device=self.device)
-        elif out.device != self.device or out.shape[0] < voxel_count:
-            raise RuntimeError(f"'out' array must an array with at least {voxel_count} rows on device {self.device}")
-        elif not _is_contiguous_vec_like_array(out, vec_length=3, scalar_types=(int32,)):
-            raise RuntimeError("'out' must be a contiguous 1D array with type vec3i or a 2D array of type int32 with shape (N, 3) ")
-        if self.device.is_cpu:
-            self.runtime.core.wp_volume_get_voxels_host(self.id, out.ptr)
-        else:
-            self.runtime.core.wp_volume_get_voxels_device(self.id, out.ptr)
-        return out
+        ...
 
     def get_voxel_size(self) -> tuple[float, float, float]:
         """Return the voxel size, i.e, world coordinates of voxel's diagonal vector"""
@@ -4285,7 +4221,7 @@ class Volume:
             raise RuntimeError('Invalid feature array')
         return Volume.FeatureArrayInfo(Volume._decode_nvdb_name(name), buf.value, value_size.value, value_count.value, type_str_buffer.value.decode('ascii'))
 
-    def feature_array(self, feature_index: int, dtype=None) -> array:
+    def feature_array(self, feature_index: builtins.int, dtype: Any=None) -> _VolumeArray[Any, [int]]:
         """Return one the grid's feature data arrays as a Warp array.
 
         Args:
@@ -4293,23 +4229,7 @@ class Volume:
             dtype: Data type for the returned Warp array.
               If not provided, will be deduced from the array metadata.
         """
-        info = self.get_feature_array_info(feature_index)
-        if dtype is None:
-            try:
-                dtype = Volume._nvdb_type_to_dtype[info.type_str]
-            except KeyError:
-                dtype = uint8
-        value_count = info.value_count
-        value_size = info.value_size
-        if type_size_in_bytes(dtype) == 1:
-            value_count *= value_size
-            value_size = 1
-        elif value_size == 1 and value_count % type_size_in_bytes(dtype) == 0:
-            value_size = type_size_in_bytes(dtype)
-            value_count = value_count // value_size
-        if type_size_in_bytes(dtype) != value_size:
-            raise RuntimeError(f'Cannot cast feature data of size {value_size} to array dtype {type_repr(dtype)}')
-        return array(ptr=info.ptr, dtype=dtype, shape=value_count, device=self.device)
+        ...
 
     @classmethod
     def load_from_nvdb(cls, file_or_buffer, device=None) -> Volume:
@@ -4536,7 +4456,7 @@ class Volume:
         return volume
 
     @classmethod
-    def allocate(cls, min: list[int], max: list[int], voxel_size: int | float | list[float] | tuple[float, float, float], bg_value=0.0, translation=(0.0, 0.0, 0.0), points_in_world_space=False, device: warp.DeviceLike=None) -> Volume:
+    def allocate(cls, min: Sequence[builtins.float] | Vector[Any, Literal[3]] | np.ndarray, max: Sequence[builtins.float] | Vector[Any, Literal[3]] | np.ndarray, voxel_size: builtins.int | builtins.float | list[builtins.float] | tuple[builtins.float, builtins.float, builtins.float], bg_value: Any=0.0, translation: Any=(0.0, 0.0, 0.0), points_in_world_space: builtins.bool=False, device: warp.DeviceLike=None) -> Volume:
         """Allocate a new Volume based on the bounding box defined by min and max.
 
         Allocate a volume that is large enough to contain voxels [min[0], min[1], min[2]] - [max[0], max[1], max[2]], inclusive.
@@ -4560,16 +4480,7 @@ class Volume:
             translation: Translation between the index and world spaces.
             device: The device to create the volume on.
         """
-        voxel_size = cls._normalize_voxel_size(voxel_size)
-        if points_in_world_space:
-            vs = np.asarray(voxel_size, dtype=np.float32)
-            min = np.around((np.array(min, dtype=np.float32) - translation) / vs)
-            max = np.around((np.array(max, dtype=np.float32) - translation) / vs)
-        tile_min = np.array(min, dtype=np.int32) // 8
-        tile_max = np.array(max, dtype=np.int32) // 8
-        tiles = np.array([[i, j, k] for i in range(tile_min[0], tile_max[0] + 1) for j in range(tile_min[1], tile_max[1] + 1) for k in range(tile_min[2], tile_max[2] + 1)], dtype=np.int32)
-        tile_points = array(tiles * 8, device=device)
-        return cls.allocate_by_tiles(tile_points, voxel_size, bg_value, translation, device)
+        ...
 
     @staticmethod
     def _normalize_voxel_size(voxel_size: int | float | np.floating | np.integer | list[float] | tuple[float, float, float] | np.ndarray) -> tuple[float, float, float]:
@@ -4818,7 +4729,7 @@ class Volume:
             volume._rebuild_info = Volume.RebuildInfo('voxels', max_active_voxels_c, max_leaf_nodes_c, max_lower_nodes_c, max_upper_nodes_c)
         return volume
 
-    def rebuild(self, points: array, status: array | None=None, point_mask: array | None=None) -> array | None:
+    def rebuild(self, points: _VolumeArray, status: _VolumeArray | None=None, point_mask: _VolumeArray | None=None) -> _VolumeArray | None:
         """Rebuild this volume's topology in place from ``points``.
 
         The volume must have been created with ``rebuildable=True`` or explicit capacity arguments. The input kind
@@ -4844,11 +4755,7 @@ class Volume:
             RuntimeError: If ``points``, ``point_mask``, or ``status`` is not a contiguous array of the required
                 type and shape.
         """
-        if self._rebuild_info.kind == 'tiles':
-            return self._rebuild_tiles(points, status=status, point_mask=point_mask)
-        if self._rebuild_info.kind == 'voxels':
-            return self._rebuild_voxels(points, status=status, point_mask=point_mask)
-        raise RuntimeError('Volume is not rebuildable')
+        ...
 
     def _rebuild_tiles(self, tile_points: array, status: array | None=None, point_mask: array | None=None) -> array | None:
         """Rebuild this volume's tile topology from ``tile_points``."""
@@ -5397,3 +5304,4 @@ _Idx: TypeAlias = builtins.int | int_base
 _ArrayDType = TypeVar('_ArrayDType', default=Any)
 _PyNumber: TypeAlias = builtins.int | builtins.float
 _TileScalar: TypeAlias = builtins.int | builtins.float | scalar_base | Vector[Any, Any] | Matrix[Any, Any, Any]
+_VolumeArray = array

@@ -17,32 +17,26 @@ Coords_f64 = wp.vec3d
 'Type representing element coordinates at fp64 precision.'
 
 @_typing_overload
-@wp.func
 def make_coords(a: float, b: float, c: float):
     return Coords(a, b, c)
 
 @_typing_overload
-@wp.func
 def make_coords(a: wp.float64, b: wp.float64, c: wp.float64):
     return Coords_f64(a, b, c)
 
 @_typing_overload
-@wp.func
 def make_coords(a: float, b: float):
     return Coords(a, b, 0.0)
 
 @_typing_overload
-@wp.func
 def make_coords(a: wp.float64, b: wp.float64):
     return Coords_f64(a, b, wp.float64(0.0))
 
 @_typing_overload
-@wp.func
 def make_coords(a: float):
     return Coords(a, 0.0, 0.0)
 
 @_typing_overload
-@wp.func
 def make_coords(a: wp.float64):
     return Coords_f64(a, wp.float64(0.0), wp.float64(0.0))
 OUTSIDE = -100000000.0
@@ -121,13 +115,11 @@ class Sample_f64:
     trial_dof: DofIndex = NULL_DOF_INDEX
 
 @_typing_overload
-@wp.func
 def make_free_sample(element_index: ElementIndex, element_coords: Coords):
     """Return a :class:`Sample` that is not associated to any quadrature point or dof."""
     return Sample(element_index, element_coords, NULL_QP_INDEX, 0.0, NULL_DOF_INDEX, NULL_DOF_INDEX)
 
 @_typing_overload
-@wp.func
 def make_free_sample(element_index: ElementIndex, element_coords: Coords_f64):
     """Return a :class:`Sample_f64` that is not associated to any quadrature point or dof."""
     return Sample_f64(element_index, element_coords, NULL_QP_INDEX, wp.float64(0.0), NULL_DOF_INDEX, NULL_DOF_INDEX)

@@ -8,7 +8,7 @@
 # warp/_src/types.py already defines an `Int` type variable.
 
 import builtins
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from typing import Any, Literal, Protocol, Self, TypeAlias, TypeVar, overload
 
 from shape_extensions import (
@@ -29,7 +29,9 @@ __generator__ = {
     "rewrite_params": {
         "int | float | list[float] | tuple[float, float, float] | None": (
             "int | float | list[float] | tuple[float, float, float] | Vector[Any, Literal[3]] | None"
-        )
+        ),
+        # `wp.indexedarray(a, [idx, None])`: `None` leaves a dimension unindexed.
+        "array | list[array] | None": "array | Sequence[array | None] | None",
     },
 }
 
@@ -270,6 +272,8 @@ class array[DType, Shape: IntTuple = IntTuple](Array[DType, Shape]):
     def grad(self, grad: array[DType, Shape] | None) -> None: ...
     def to(self, device: warp.DeviceLike, requires_grad: builtins.bool | None = None) -> array[DType, Shape]: ...
     def contiguous(self) -> array[DType, Shape]: ...
+    def numpy(self, *, _suppress_bfloat16_warning: builtins.bool = False) -> np.ndarray[tuple[builtins.int, ...], np.dtype[Any]]: ...
+    def list(self) -> builtins.list[Any]: ...
     def flatten(self) -> array[DType, flatten_shape(Shape)]: ...
     @overload
     def reshape[N: IntVar](self, shape: _Int[N]) -> array[DType, reshape_int_shape(Shape, _Int[N])]: ...
@@ -299,10 +303,8 @@ array4d: TypeAlias = array[_ArrayDType, [int, int, int, int]]
 class noncontiguous_array_base[DType, Shape: IntTuple = IntTuple](Array[DType, Shape]): ...
 class indexedarray[DType, Shape: IntTuple = IntTuple](noncontiguous_array_base[DType, Shape]): ...
 
-indexedarray1d: TypeAlias = indexedarray[_ArrayDType, [int]]
-indexedarray2d: TypeAlias = indexedarray[_ArrayDType, [int, int]]
-indexedarray3d: TypeAlias = indexedarray[_ArrayDType, [int, int, int]]
-indexedarray4d: TypeAlias = indexedarray[_ArrayDType, [int, int, int, int]]
+# (`wp.indexedarray1d`–`4d` stay functions, as in Warp: `wp.indexedarray2d[float]`
+# is not a valid annotation, and Warp raises when it meets one in a kernel.)
 
 # ---------------------------------------------------------------------------
 # Vector, matrix, quaternion and transform types. Upstream defines these twice:
@@ -487,7 +489,10 @@ class Tile[DType, Shape: IntTuple = IntTuple]:
     def __neg__(self) -> Tile[DType, Shape]: ...
     def __len__(self) -> builtins.int: ...
 
-class HashGridQuery:
+# Generic in the coordinate precision, so `wp.HashGridQuery[wp.float64]`
+# annotations (upstream: a dynamic `__class_getitem__`, read as `Unknown`) are
+# a type. Bare `wp.HashGridQuery` is the float32 query, as in Warp.
+class HashGridQuery[D = float32]:
     # Kernel scope: `for index in wp.hash_grid_query(grid, point, radius)`.
     def __iter__(self) -> Iterator[int]: ...
 
@@ -513,8 +518,33 @@ class Bvh:
 class HashGrid:
     id: uint64
 
+# Inside `class Volume`, the method `Volume.array` shadows the `array` class, so
+# every later `-> array` annotation (get_voxels, get_tiles, feature_array,
+# rebuild, allocate_by_*) was the *method*: results were `Unknown`.
+_VolumeArray = array
+
 class Volume:
     id: uint64
+    def array(self) -> _VolumeArray[uint8, [int]]: ...
+    def get_tiles(self, out: _VolumeArray | None = None) -> _VolumeArray[int32, [int, 3]]: ...
+    def get_voxels(self, out: _VolumeArray | None = None) -> _VolumeArray[int32, [int, 3]]: ...
+    def feature_array(self, feature_index: builtins.int, dtype: Any = None) -> _VolumeArray[Any, [int]]: ...
+    # `min`/`max` take any 3-sequence (tuple, vec3, NumPy array, float list);
+    # upstream: `list[int]`.
+    @classmethod
+    def allocate(
+        cls,
+        min: Sequence[builtins.float] | Vector[Any, Literal[3]] | np.ndarray,
+        max: Sequence[builtins.float] | Vector[Any, Literal[3]] | np.ndarray,
+        voxel_size: builtins.int | builtins.float | list[builtins.float] | tuple[builtins.float, builtins.float, builtins.float],
+        bg_value: Any = 0.0,
+        translation: Any = (0.0, 0.0, 0.0),
+        points_in_world_space: builtins.bool = False,
+        device: warp.DeviceLike = None,
+    ) -> Volume: ...
+    def rebuild(
+        self, points: _VolumeArray, status: _VolumeArray | None = None, point_mask: _VolumeArray | None = None
+    ) -> _VolumeArray | None: ...
 
 class MeshQuery:
     # Kernel scope: `for face in wp.mesh_query_aabb(mesh, low, high)`. (BVH

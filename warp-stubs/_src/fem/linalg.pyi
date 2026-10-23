@@ -10,7 +10,6 @@ from warp._src.types import type_scalar_type
 from typing import overload as _typing_overload
 
 @_typing_overload
-@wp.func
 def generalized_outer(x: wp.types.vector(Any, wp.Scalar), y: wp.types.vector(Any, wp.Scalar)):
     """Compute a generalized outer product.
 
@@ -24,7 +23,6 @@ def generalized_outer(x: wp.types.vector(Any, wp.Scalar), y: wp.types.vector(Any
     return wp.outer(x, y)
 
 @_typing_overload
-@wp.func
 def generalized_outer(x: wp.Scalar, y: wp.types.vector(Any, wp.Scalar)):
     """Compute a generalized outer product.
 
@@ -38,7 +36,6 @@ def generalized_outer(x: wp.Scalar, y: wp.types.vector(Any, wp.Scalar)):
     return x * y
 
 @_typing_overload
-@wp.func
 def generalized_outer(x: wp.types.vector(Any, wp.Scalar), y: wp.Scalar):
     """Compute a generalized outer product.
 
@@ -52,7 +49,6 @@ def generalized_outer(x: wp.types.vector(Any, wp.Scalar), y: wp.Scalar):
     return x * y
 
 @_typing_overload
-@wp.func
 def generalized_outer(x: wp.quatf, y: wp.types.vector(Any, wp.Scalar)):
     """Compute a generalized outer product.
 
@@ -66,7 +62,6 @@ def generalized_outer(x: wp.quatf, y: wp.types.vector(Any, wp.Scalar)):
     return generalized_outer(wp.vec4(x[0], x[1], x[2], x[3]), y)
 
 @_typing_overload
-@wp.func
 def generalized_inner(x: wp.types.vector(Any, wp.Scalar), y: wp.types.vector(Any, wp.Scalar)):
     """Compute a generalized inner product.
 
@@ -80,7 +75,6 @@ def generalized_inner(x: wp.types.vector(Any, wp.Scalar), y: wp.types.vector(Any
     return wp.dot(x, y)
 
 @_typing_overload
-@wp.func
 def generalized_inner(x: wp.Scalar, y: wp.Scalar):
     """Compute a generalized inner product.
 
@@ -94,7 +88,6 @@ def generalized_inner(x: wp.Scalar, y: wp.Scalar):
     return x * y
 
 @_typing_overload
-@wp.func
 def generalized_inner(x: wp.types.matrix((Any, Any), wp.Scalar), y: wp.types.vector(Any, wp.Scalar)):
     """Compute a generalized inner product.
 
@@ -108,7 +101,6 @@ def generalized_inner(x: wp.types.matrix((Any, Any), wp.Scalar), y: wp.types.vec
     return y @ x
 
 @_typing_overload
-@wp.func
 def generalized_inner(x: wp.types.vector(Any, wp.Scalar), y: wp.types.matrix((Any, Any), wp.Scalar)):
     """Compute a generalized inner product.
 
@@ -122,7 +114,6 @@ def generalized_inner(x: wp.types.vector(Any, wp.Scalar), y: wp.types.matrix((An
     return x @ y
 
 @_typing_overload
-@wp.func
 def generalized_inner(x: wp.types.matrix((Any, Any), wp.Scalar), y: wp.types.matrix((Any, Any), wp.Scalar)):
     """Compute a generalized inner product.
 
@@ -136,12 +127,10 @@ def generalized_inner(x: wp.types.matrix((Any, Any), wp.Scalar), y: wp.types.mat
     return wp.ddot(x, y)
 
 @_typing_overload
-@wp.func
 def basis_coefficient(val: wp.Scalar, i: int):
     return val
 
 @_typing_overload
-@wp.func
 def basis_coefficient(val: wp.types.matrix((Any, Any), wp.Scalar), i: int):
     cols = int(type(val[0]).length)
     row = i // cols
@@ -149,17 +138,14 @@ def basis_coefficient(val: wp.types.matrix((Any, Any), wp.Scalar), i: int):
     return val[row, col]
 
 @_typing_overload
-@wp.func
 def basis_coefficient(val: Any, i: int):
     return val[i]
 
 @_typing_overload
-@wp.func
 def basis_coefficient(val: wp.types.vector(Any, wp.Scalar), i: int, j: int):
     return val[j]
 
 @_typing_overload
-@wp.func
 def basis_coefficient(val: wp.types.matrix((Any, Any), wp.Scalar), i: int, j: int):
     return val[i, j]
 
@@ -169,25 +155,21 @@ def symmetric_part(x: Any):
     return x.dtype(0.5) * (x + wp.transpose(x))
 
 @_typing_overload
-@wp.func
 def spherical_part(x: wp.types.matrix((2, 2), wp.Scalar)):
     """Spherical part of a square tensor."""
     return x.dtype(0.5) * wp.trace(x) * wp.identity(n=2, dtype=x.dtype)
 
 @_typing_overload
-@wp.func
 def spherical_part(x: wp.types.matrix((3, 3), wp.Scalar)):
     """Spherical part of a square tensor."""
     return wp.trace(x) / x.dtype(3.0) * wp.identity(n=3, dtype=x.dtype)
 
 @_typing_overload
-@wp.func
 def skew_part(x: wp.types.matrix((2, 2), wp.Scalar)):
     """Skew part of a 2x2 tensor as corresponding rotation angle."""
     return x.dtype(0.5) * (x[1, 0] - x[0, 1])
 
 @_typing_overload
-@wp.func
 def skew_part(x: wp.types.matrix((3, 3), wp.Scalar)):
     """Skew part of a 3x3 tensor as the corresponding rotation vector."""
     a = x.dtype(0.5) * (x[2, 1] - x[1, 2])

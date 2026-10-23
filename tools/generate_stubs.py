@@ -398,16 +398,15 @@ def rewrite_params(upstream: list[ast.stmt], rules: dict[str, str], *, where: st
         raise ValueError(f"{where}: rewrite_params rules matched nothing: {sorted(unused)}")
 
 
+def is_wp_func_decorator(decorator: ast.expr) -> bool:
+    target = decorator.func if isinstance(decorator, ast.Call) else decorator
+    return (isinstance(target, ast.Attribute) and target.attr == "func") or (
+        isinstance(target, ast.Name) and target.id == "func"
+    )
+
+
 def is_wp_func(node: ast.stmt) -> bool:
-    if not isinstance(node, ast.FunctionDef):
-        return False
-    for decorator in node.decorator_list:
-        target = decorator.func if isinstance(decorator, ast.Call) else decorator
-        if (isinstance(target, ast.Attribute) and target.attr == "func") or (
-            isinstance(target, ast.Name) and target.id == "func"
-        ):
-            return True
-    return False
+    return isinstance(node, ast.FunctionDef) and any(is_wp_func_decorator(d) for d in node.decorator_list)
 
 
 def group_wp_func_overloads(upstream: list[ast.stmt]) -> list[ast.stmt]:
@@ -427,6 +426,9 @@ def group_wp_func_overloads(upstream: list[ast.stmt]) -> list[ast.stmt]:
             if stmt is defs[0]:
                 # Overloads must be adjacent: gather the group at its first definition.
                 for definition in defs:
+                    # `@wp.func` returns a `Function` object; an overload group of
+                    # objects is unusable, so the overloads stay plain functions.
+                    definition.decorator_list = [d for d in definition.decorator_list if not is_wp_func_decorator(d)]
                     definition.decorator_list.insert(0, ast.Name(id="_typing_overload", ctx=ast.Load()))
                 result.extend(defs)
             continue

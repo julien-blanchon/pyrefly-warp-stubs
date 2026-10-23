@@ -6,9 +6,12 @@ Pyrefly error); `test_*` functions launch the equivalent kernels on the CPU.
 
 from __future__ import annotations
 
+import importlib.util
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, assert_type
 
 import numpy as np
+import pytest
 import warp as wp
 
 from _launch import DEVICE
@@ -59,8 +62,14 @@ def check_scalar_arithmetic(a: wp.array1d[wp.float32], i: int) -> None:
     assert_type(wp.where(a[i] > 0.0, a[i], -a[i]), wp.float32)
 
 
-def check_indexed_arrays(ia: wp.indexedarray2d[float], i: int, j: int) -> None:
-    assert_type(ia[i, j], float)
+def check_indexed_arrays(ia: wp.indexedarray[float], i: int) -> None:
+    assert_type(ia[i], float)
+
+
+# `wp.indexedarray2d` is a function in Warp, not an annotation: Warp raises when a
+# kernel uses it (see test_indexedarray_annotations).
+def check_indexed_array_alias(ia: wp.indexedarray2d[float]) -> None:  # E: is not subscriptable
+    pass
 
 
 # Overloads are looked up by name in the kernel's module, so no `module="unique"`.
@@ -143,3 +152,39 @@ def test_quoted_assert_type_runs() -> None:
     # evaluate their type argument at runtime, and Warp rejects `[10, 3]`.
     x = wp.zeros((10, 3), dtype=float, device=DEVICE)
     assert_type(x, "wp.array[float, [10, 3]]")
+
+
+INDEXED_KERNELS = """
+import warp as wp
+
+@wp.kernel(module="unique")
+def ok(a: wp.indexedarray[float], out: wp.array1d[float]):
+    i = wp.tid()
+    out[i] = a[i] * 2.0
+"""
+
+
+def test_indexedarray_annotations(tmp_path: Path) -> None:
+    ok = tmp_path / "indexed_ok.py"
+    ok.write_text(INDEXED_KERNELS)
+    module = _import(ok)
+    base = wp.array(np.arange(5, dtype=np.float32), dtype=float, device=DEVICE)
+    view = wp.indexedarray(base, [wp.array([4, 0], dtype=int, device=DEVICE)])
+    out = wp.zeros(2, dtype=float, device=DEVICE)
+    wp.launch(module.ok, dim=2, inputs=[view, out], device=DEVICE)
+    np.testing.assert_allclose(out.numpy(), [8.0, 0.0])
+
+    bad = tmp_path / "indexed_bad.py"
+    bad.write_text(
+        "import warp as wp\n\n@wp.kernel(module='unique')\ndef bad(a: wp.indexedarray2d[float]):\n    pass\n"
+    )
+    with pytest.raises(TypeError, match="not subscriptable"):
+        _import(bad)
+
+
+def _import(path: Path) -> Any:
+    spec = importlib.util.spec_from_file_location(path.stem, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module

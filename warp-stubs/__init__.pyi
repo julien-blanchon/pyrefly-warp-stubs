@@ -58,6 +58,7 @@ from shape_extensions import Int as _Int
 from warp._shapes import arange_shape, broadcast_to_int_shape, broadcast_to_shape, remove_axis_shape, reshape_int_shape, reshape_shape, squeeze_shape
 from warp._src.types import _HasShape, _TileScalar
 from warp._src.types import scalar_base as _scalar_base
+from typing import Protocol as _Protocol
 
 def zeros_like[D, S: IntTuple](src: Array[D, S], device: DeviceLike=None, requires_grad: _builtins.bool | None=None, pinned: _builtins.bool | None=None, retain_grad: _builtins.bool=False) -> array[D, S]:
     """Return a zero-initialized array with the same type and dimension of another array.
@@ -501,25 +502,540 @@ from warp._src.codegen import WarpCodegenIndexError as WarpCodegenIndexError
 from warp._src.codegen import WarpCodegenKeyError as WarpCodegenKeyError
 from warp._src.codegen import WarpCodegenTypeError as WarpCodegenTypeError
 from warp._src.codegen import WarpCodegenValueError as WarpCodegenValueError
-from warp._src.context import func as func
+
+@over
+def func[**P, R](f: Callable[P, R], /) -> _Func[P, R]:
+    """Register a Warp function (bare decorator: ``@wp.func``)."""
+    ...
+
+@over
+def func(f: None=None, *, name: str | None=None, module: Module | Literal['unique'] | str | None=None, inline: _builtins.bool | None=None) -> _FuncDecorator:
+    """Register a Warp function (bare decorator: ``@wp.func``)."""
+    ...
 from warp._src.context import func_grad as func_grad
 from warp._src.context import func_replay as func_replay
 from warp._src.context import func_native as func_native
 from warp._src.context import grad as grad
-from warp._src.context import kernel as kernel
+
+@over
+def kernel(f: Callable[..., Any], /) -> Kernel:
+    """
+    Decorator to register a Warp kernel from a Python function.
+    The function must be defined with type annotations for all arguments.
+    The function must not return anything.
+
+    Example::
+
+        @wp.kernel
+        def my_kernel(a: wp.array[float], b: wp.array[float]):
+            tid = wp.tid()
+            b[tid] = a[tid] + 1.0
+
+
+        @wp.kernel(enable_backward=False)
+        def my_kernel_no_backward(a: wp.array2d[float], x: float):
+            # the backward pass will not be generated
+            i, j = wp.tid()
+            a[i, j] = x
+
+
+        @wp.kernel(module="unique")
+        def my_kernel_unique_module(a: wp.array[float], b: wp.array[float]):
+            # the kernel will be registered in new unique module created just for this
+            # kernel and its dependent functions and structs
+            tid = wp.tid()
+            b[tid] = a[tid] + 1.0
+
+
+        @wp.kernel(launch_bounds=(256, 1))
+        def my_kernel_with_launch_bounds(a: wp.array[float]):
+            # CUDA __launch_bounds__ will be set to (256, 1)
+            tid = wp.tid()
+            a[tid] = a[tid] * 2.0
+
+
+        @wp.kernel(cuda_max_registers=64)
+        def my_kernel_with_cuda_max_registers(a: wp.array[float]):
+            # CUDA __maxnreg__(64) will be set when supported
+            tid = wp.tid()
+            a[tid] = a[tid] * 2.0
+
+
+        @wp.kernel(enable_cuda_smem_spilling=True, launch_bounds=256)
+        def my_kernel_with_cuda_smem_spilling(a: wp.array[float]):
+            # CUDA 13+ may use shared memory for register spills
+            tid = wp.tid()
+            a[tid] = a[tid] * 2.0
+
+
+        @wp.kernel(module_options={"fast_math": True}, module="unique")
+        def my_kernel_fast(a: wp.array[float], b: wp.array[float]):
+            # fast_math is a module-level option, so module="unique" is required
+            tid = wp.tid()
+            b[tid] = a[tid] + 1.0
+
+    Args:
+        f: The function to be registered as a kernel.
+        name: Sets the kernel key used for registration and native code
+            generation. If ``None``, Warp derives the key from ``f``. A custom
+            name must be a valid C++ identifier. When ``strip_hash=True``, Warp
+            uses the key without a hash suffix as the base of the generated
+            native entry-point names.
+        enable_backward: If False, the backward pass will not be
+            generated.
+        launch_bounds: CUDA ``__launch_bounds__`` attribute for the
+            kernel. Can be an int (``maxThreadsPerBlock``) or a tuple
+            of 1-2 ints ``(maxThreadsPerBlock,
+            minBlocksPerMultiprocessor)``. Only applies to CUDA
+            kernels. Note: The ``block_dim`` parameter in
+            :func:`warp.launch` must not exceed the
+            ``maxThreadsPerBlock`` value specified here.
+        cuda_max_registers: CUDA ``__maxnreg__`` attribute specifying the maximum
+            number of registers allocated per thread. ``cuda_max_registers`` must
+            be a positive int and cannot be combined with ``launch_bounds``. The
+            ``cuda_max_registers`` option applies only to CUDA kernels and is ignored
+            when Warp was built with CUDA Toolkit earlier than 12.4 or when
+            ``wp.config.llvm_cuda`` is ``True``.
+        enable_cuda_smem_spilling: If ``True``, allow the CUDA Toolkit used to
+            build Warp, when version 13.0 or later, to use shared memory for
+            register spills. Warp applies ``enable_cuda_smem_spilling`` independently
+            to the forward and backward kernels and silently ignores the option when
+            an entry point uses dynamic shared memory, on CPU, with older CUDA
+            Toolkits, in unsupported device-debug compilation, or when
+            ``wp.config.llvm_cuda`` is ``True``. Explicit ``launch_bounds`` are
+            recommended to avoid over-allocating shared memory and reducing occupancy.
+        cluster_dim: CUDA Thread Block Cluster size as a 1D CTA count.
+            Warp emits CUDA ``__cluster_dims__(cluster_dim, 1, 1)`` because
+            kernels use a 1D hardware launch grid. Must be a positive int <= 16
+            (Hopper non-portable cap). Default ``1`` means no clustering. Only
+            effective on devices with compute capability >= 9.0; silently
+            ignored on older archs and on CPU. See
+            :func:`warp.get_cuda_max_cluster_dim`.
+        module: The :class:`warp._src.context.Module` to which the
+            kernel belongs. Alternatively, if a string ``"unique"`` is
+            provided, the kernel is assigned to a new module named
+            after the kernel name and hash. If ``None``, the module is
+            inferred from the function's module.
+        module_options: A dict of module-level compilation options
+            (e.g. ``fast_math``, ``mode``, ``max_unroll``,
+            ``deterministic``, ``deterministic_max_records``) that are
+            applied to the kernel's module. Requires
+            ``module="unique"``; raises ``ValueError`` otherwise.
+            For shared modules, use :func:`warp.set_module_options`
+            instead. See :func:`warp.set_module_options` for the full
+            list of supported options.
+        entry_point_abi: Experimental entry-point ABI. ``"warp"`` (the
+            default) is supported by CPU and CUDA and emits the regular
+            :func:`warp.launch`-compatible kernel signature.
+            ``"external_constant_params"`` is supported by CUDA only; it emits
+            a no-argument external entry point and binds the kernel's single
+            Warp struct argument to the constant-memory symbol ``params``. It
+            cannot be launched with :func:`warp.launch` and requires
+            ``enable_backward=False``. This API may change in future releases.
+        grid_stride: Whether to emit a grid-stride loop. ``False`` opts
+            into a lean launch (no grid-stride loop) with lower per-thread
+            overhead and register pressure, but the block count cannot be
+            capped: launching it with ``max_blocks > 0`` raises. ``None``
+            defers to the ``"default_grid_stride"`` module option, then
+            :data:`warp.config.default_grid_stride`.
+
+    Returns:
+        The registered kernel.
+    """
+    ...
+
+@over
+def kernel(f: None=None, *, name: str | None=None, enable_backward: _builtins.bool | None=None, launch_bounds: tuple[_builtins.int, ...] | _builtins.int | None=None, cuda_max_registers: _builtins.int | None=None, enable_cuda_smem_spilling: _builtins.bool | None=None, cluster_dim: _builtins.int | None=None, module: Module | Literal['unique'] | str | None=None, module_options: dict[str, Any] | None=None, entry_point_abi: Literal['warp', 'external_constant_params'] | None=None, grid_stride: _builtins.bool | None=None) -> Callable[[Callable[..., Any]], Kernel]:
+    """
+    Decorator to register a Warp kernel from a Python function.
+    The function must be defined with type annotations for all arguments.
+    The function must not return anything.
+
+    Example::
+
+        @wp.kernel
+        def my_kernel(a: wp.array[float], b: wp.array[float]):
+            tid = wp.tid()
+            b[tid] = a[tid] + 1.0
+
+
+        @wp.kernel(enable_backward=False)
+        def my_kernel_no_backward(a: wp.array2d[float], x: float):
+            # the backward pass will not be generated
+            i, j = wp.tid()
+            a[i, j] = x
+
+
+        @wp.kernel(module="unique")
+        def my_kernel_unique_module(a: wp.array[float], b: wp.array[float]):
+            # the kernel will be registered in new unique module created just for this
+            # kernel and its dependent functions and structs
+            tid = wp.tid()
+            b[tid] = a[tid] + 1.0
+
+
+        @wp.kernel(launch_bounds=(256, 1))
+        def my_kernel_with_launch_bounds(a: wp.array[float]):
+            # CUDA __launch_bounds__ will be set to (256, 1)
+            tid = wp.tid()
+            a[tid] = a[tid] * 2.0
+
+
+        @wp.kernel(cuda_max_registers=64)
+        def my_kernel_with_cuda_max_registers(a: wp.array[float]):
+            # CUDA __maxnreg__(64) will be set when supported
+            tid = wp.tid()
+            a[tid] = a[tid] * 2.0
+
+
+        @wp.kernel(enable_cuda_smem_spilling=True, launch_bounds=256)
+        def my_kernel_with_cuda_smem_spilling(a: wp.array[float]):
+            # CUDA 13+ may use shared memory for register spills
+            tid = wp.tid()
+            a[tid] = a[tid] * 2.0
+
+
+        @wp.kernel(module_options={"fast_math": True}, module="unique")
+        def my_kernel_fast(a: wp.array[float], b: wp.array[float]):
+            # fast_math is a module-level option, so module="unique" is required
+            tid = wp.tid()
+            b[tid] = a[tid] + 1.0
+
+    Args:
+        f: The function to be registered as a kernel.
+        name: Sets the kernel key used for registration and native code
+            generation. If ``None``, Warp derives the key from ``f``. A custom
+            name must be a valid C++ identifier. When ``strip_hash=True``, Warp
+            uses the key without a hash suffix as the base of the generated
+            native entry-point names.
+        enable_backward: If False, the backward pass will not be
+            generated.
+        launch_bounds: CUDA ``__launch_bounds__`` attribute for the
+            kernel. Can be an int (``maxThreadsPerBlock``) or a tuple
+            of 1-2 ints ``(maxThreadsPerBlock,
+            minBlocksPerMultiprocessor)``. Only applies to CUDA
+            kernels. Note: The ``block_dim`` parameter in
+            :func:`warp.launch` must not exceed the
+            ``maxThreadsPerBlock`` value specified here.
+        cuda_max_registers: CUDA ``__maxnreg__`` attribute specifying the maximum
+            number of registers allocated per thread. ``cuda_max_registers`` must
+            be a positive int and cannot be combined with ``launch_bounds``. The
+            ``cuda_max_registers`` option applies only to CUDA kernels and is ignored
+            when Warp was built with CUDA Toolkit earlier than 12.4 or when
+            ``wp.config.llvm_cuda`` is ``True``.
+        enable_cuda_smem_spilling: If ``True``, allow the CUDA Toolkit used to
+            build Warp, when version 13.0 or later, to use shared memory for
+            register spills. Warp applies ``enable_cuda_smem_spilling`` independently
+            to the forward and backward kernels and silently ignores the option when
+            an entry point uses dynamic shared memory, on CPU, with older CUDA
+            Toolkits, in unsupported device-debug compilation, or when
+            ``wp.config.llvm_cuda`` is ``True``. Explicit ``launch_bounds`` are
+            recommended to avoid over-allocating shared memory and reducing occupancy.
+        cluster_dim: CUDA Thread Block Cluster size as a 1D CTA count.
+            Warp emits CUDA ``__cluster_dims__(cluster_dim, 1, 1)`` because
+            kernels use a 1D hardware launch grid. Must be a positive int <= 16
+            (Hopper non-portable cap). Default ``1`` means no clustering. Only
+            effective on devices with compute capability >= 9.0; silently
+            ignored on older archs and on CPU. See
+            :func:`warp.get_cuda_max_cluster_dim`.
+        module: The :class:`warp._src.context.Module` to which the
+            kernel belongs. Alternatively, if a string ``"unique"`` is
+            provided, the kernel is assigned to a new module named
+            after the kernel name and hash. If ``None``, the module is
+            inferred from the function's module.
+        module_options: A dict of module-level compilation options
+            (e.g. ``fast_math``, ``mode``, ``max_unroll``,
+            ``deterministic``, ``deterministic_max_records``) that are
+            applied to the kernel's module. Requires
+            ``module="unique"``; raises ``ValueError`` otherwise.
+            For shared modules, use :func:`warp.set_module_options`
+            instead. See :func:`warp.set_module_options` for the full
+            list of supported options.
+        entry_point_abi: Experimental entry-point ABI. ``"warp"`` (the
+            default) is supported by CPU and CUDA and emits the regular
+            :func:`warp.launch`-compatible kernel signature.
+            ``"external_constant_params"`` is supported by CUDA only; it emits
+            a no-argument external entry point and binds the kernel's single
+            Warp struct argument to the constant-memory symbol ``params``. It
+            cannot be launched with :func:`warp.launch` and requires
+            ``enable_backward=False``. This API may change in future releases.
+        grid_stride: Whether to emit a grid-stride loop. ``False`` opts
+            into a lean launch (no grid-stride loop) with lower per-thread
+            overhead and register pressure, but the block count cannot be
+            capped: launching it with ``max_blocks > 0`` raises. ``None``
+            defers to the ``"default_grid_stride"`` module option, then
+            :data:`warp.config.default_grid_stride`.
+
+    Returns:
+        The registered kernel.
+    """
+    ...
 from warp._src.context import struct as struct
 from warp._src.context import overload as overload
 from warp._src.types import constant as constant
 from warp._src.types import address_of as address_of
 from warp._src.utils import map as map
-from warp._src.builtins import static as static
+
+def static[T](expr: T) -> T:
+    """
+    Evaluate a static expression and replace the expression with its result.
+
+    Args:
+        expr: A Python expression to evaluate. Must return a non-null value which must be either a Warp function, a string, or a type that is supported inside Warp kernels and functions (excluding Warp arrays since they cannot be created in a Warp kernel at the moment).
+
+    Note:
+        The inner expression must only reference variables that are available from the current scope where the Warp kernel or function containing the expression is defined,
+        which includes constant variables and variables captured in the current closure in which the function or kernel is implemented.
+    """
+    ...
 from warp._src.context import Kernel as Kernel
 from warp._src.context import Function as Function
 from warp._src.context import Launch as Launch
 from warp._src.context import Module as Module
 from warp._src.context import ModuleBuildOptions as ModuleBuildOptions
-from warp._src.context import launch as launch
-from warp._src.context import launch_tiled as launch_tiled
+
+@over
+def launch(kernel: Any, dim: _builtins.int | Sequence[_builtins.int], inputs: Sequence[Any]=..., outputs: Sequence[Any]=..., adj_inputs: Sequence[Any]=..., adj_outputs: Sequence[Any]=..., device: DeviceLike=None, stream: Stream | None=None, adjoint: _builtins.bool=False, record_tape: _builtins.bool=True, record_cmd: Literal[False]=False, max_blocks: _builtins.int=0, block_dim: _builtins.int | None=None) -> None:
+    """Launch a Warp kernel on the target device
+
+    Kernel launches are asynchronous with respect to the calling Python thread.
+
+    The default ``wp.config.LaunchArrayAccessMode.RELAXED`` mode does not check
+    whether array arguments are accessible from the launch device. Cross-device
+    access depends on the access direction, memory kind, and system
+    capabilities. An inaccessible array may cause a segmentation fault in a
+    CPU kernel or a CUDA illegal memory access. Set
+    :attr:`warp.config.launch_array_access_mode` to
+    ``wp.config.LaunchArrayAccessMode.CHECKED`` to detect known-invalid
+    accesses before launch. Use ``wp.config.LaunchArrayAccessMode.STRICT`` to
+    require every Warp array argument to be allocated on the launch device,
+    including cross-device allocations the hardware could access. See
+    :ref:`launch_array_access_checks` for details and limitations.
+
+    Args:
+        kernel: The name of a Warp kernel function, decorated with the :func:`@wp.kernel <warp.kernel>` decorator
+        dim: The number of threads to launch the kernel, can be an integer or a
+          sequence of integers with a maximum of 4 dimensions.
+        inputs: The input parameters to the kernel (optional)
+        outputs: The output parameters (optional)
+        adj_inputs: The adjoint inputs (optional)
+        adj_outputs: The adjoint outputs (optional)
+        device: The device to launch on.
+        stream: The stream to launch on.
+        adjoint: Whether to run forward or backward pass (typically use ``False``).
+        record_tape: When ``True``, the launch will be recorded the global
+          :class:`warp.Tape` object when present.
+        record_cmd: When ``True``, the launch will return a :class:`Launch`
+          object. The launch will not occur until the user calls
+          :meth:`Launch.launch()`.
+        max_blocks: The maximum number of CUDA thread blocks to use.
+          Requires a grid-stride loop, which is the default. Launching a
+          kernel that opted into the lean launch path with
+          ``@wp.kernel(grid_stride=False)`` and ``max_blocks > 0`` raises
+          a ``RuntimeError``.
+        block_dim: The requested number of threads per block. An omitted or
+          non-positive value defaults to 1 on CPU and 256 on CUDA. Explicit CPU
+          values from 2 through 1024 are honored when
+          :attr:`warp.config.enable_cpu_blocks` is ``True`` and otherwise
+          resolve to 1.
+    """
+    ...
+
+@over
+def launch(kernel: Any, dim: _builtins.int | Sequence[_builtins.int], inputs: Sequence[Any]=..., outputs: Sequence[Any]=..., adj_inputs: Sequence[Any]=..., adj_outputs: Sequence[Any]=..., device: DeviceLike=None, stream: Stream | None=None, adjoint: _builtins.bool=False, record_tape: _builtins.bool=True, *, record_cmd: Literal[True], max_blocks: _builtins.int=0, block_dim: _builtins.int | None=None) -> Launch:
+    """Launch a Warp kernel on the target device
+
+    Kernel launches are asynchronous with respect to the calling Python thread.
+
+    The default ``wp.config.LaunchArrayAccessMode.RELAXED`` mode does not check
+    whether array arguments are accessible from the launch device. Cross-device
+    access depends on the access direction, memory kind, and system
+    capabilities. An inaccessible array may cause a segmentation fault in a
+    CPU kernel or a CUDA illegal memory access. Set
+    :attr:`warp.config.launch_array_access_mode` to
+    ``wp.config.LaunchArrayAccessMode.CHECKED`` to detect known-invalid
+    accesses before launch. Use ``wp.config.LaunchArrayAccessMode.STRICT`` to
+    require every Warp array argument to be allocated on the launch device,
+    including cross-device allocations the hardware could access. See
+    :ref:`launch_array_access_checks` for details and limitations.
+
+    Args:
+        kernel: The name of a Warp kernel function, decorated with the :func:`@wp.kernel <warp.kernel>` decorator
+        dim: The number of threads to launch the kernel, can be an integer or a
+          sequence of integers with a maximum of 4 dimensions.
+        inputs: The input parameters to the kernel (optional)
+        outputs: The output parameters (optional)
+        adj_inputs: The adjoint inputs (optional)
+        adj_outputs: The adjoint outputs (optional)
+        device: The device to launch on.
+        stream: The stream to launch on.
+        adjoint: Whether to run forward or backward pass (typically use ``False``).
+        record_tape: When ``True``, the launch will be recorded the global
+          :class:`warp.Tape` object when present.
+        record_cmd: When ``True``, the launch will return a :class:`Launch`
+          object. The launch will not occur until the user calls
+          :meth:`Launch.launch()`.
+        max_blocks: The maximum number of CUDA thread blocks to use.
+          Requires a grid-stride loop, which is the default. Launching a
+          kernel that opted into the lean launch path with
+          ``@wp.kernel(grid_stride=False)`` and ``max_blocks > 0`` raises
+          a ``RuntimeError``.
+        block_dim: The requested number of threads per block. An omitted or
+          non-positive value defaults to 1 on CPU and 256 on CUDA. Explicit CPU
+          values from 2 through 1024 are honored when
+          :attr:`warp.config.enable_cpu_blocks` is ``True`` and otherwise
+          resolve to 1.
+    """
+    ...
+
+@over
+def launch(kernel: Any, dim: _builtins.int | Sequence[_builtins.int], inputs: Sequence[Any]=..., outputs: Sequence[Any]=..., adj_inputs: Sequence[Any]=..., adj_outputs: Sequence[Any]=..., device: DeviceLike=None, stream: Stream | None=None, adjoint: _builtins.bool=False, record_tape: _builtins.bool=True, record_cmd: _builtins.bool=False, max_blocks: _builtins.int=0, block_dim: _builtins.int | None=None) -> Launch | None:
+    """Launch a Warp kernel on the target device
+
+    Kernel launches are asynchronous with respect to the calling Python thread.
+
+    The default ``wp.config.LaunchArrayAccessMode.RELAXED`` mode does not check
+    whether array arguments are accessible from the launch device. Cross-device
+    access depends on the access direction, memory kind, and system
+    capabilities. An inaccessible array may cause a segmentation fault in a
+    CPU kernel or a CUDA illegal memory access. Set
+    :attr:`warp.config.launch_array_access_mode` to
+    ``wp.config.LaunchArrayAccessMode.CHECKED`` to detect known-invalid
+    accesses before launch. Use ``wp.config.LaunchArrayAccessMode.STRICT`` to
+    require every Warp array argument to be allocated on the launch device,
+    including cross-device allocations the hardware could access. See
+    :ref:`launch_array_access_checks` for details and limitations.
+
+    Args:
+        kernel: The name of a Warp kernel function, decorated with the :func:`@wp.kernel <warp.kernel>` decorator
+        dim: The number of threads to launch the kernel, can be an integer or a
+          sequence of integers with a maximum of 4 dimensions.
+        inputs: The input parameters to the kernel (optional)
+        outputs: The output parameters (optional)
+        adj_inputs: The adjoint inputs (optional)
+        adj_outputs: The adjoint outputs (optional)
+        device: The device to launch on.
+        stream: The stream to launch on.
+        adjoint: Whether to run forward or backward pass (typically use ``False``).
+        record_tape: When ``True``, the launch will be recorded the global
+          :class:`warp.Tape` object when present.
+        record_cmd: When ``True``, the launch will return a :class:`Launch`
+          object. The launch will not occur until the user calls
+          :meth:`Launch.launch()`.
+        max_blocks: The maximum number of CUDA thread blocks to use.
+          Requires a grid-stride loop, which is the default. Launching a
+          kernel that opted into the lean launch path with
+          ``@wp.kernel(grid_stride=False)`` and ``max_blocks > 0`` raises
+          a ``RuntimeError``.
+        block_dim: The requested number of threads per block. An omitted or
+          non-positive value defaults to 1 on CPU and 256 on CUDA. Explicit CPU
+          values from 2 through 1024 are honored when
+          :attr:`warp.config.enable_cpu_blocks` is ``True`` and otherwise
+          resolve to 1.
+    """
+    ...
+
+@over
+def launch_tiled(kernel: Any, *args: Any, dim: _builtins.int | Sequence[_builtins.int], block_dim: _builtins.int | None, record_cmd: Literal[False]=False, **kwargs: Any) -> None:
+    """A helper method for launching a grid with an extra trailing dimension equal to the block size.
+
+    For example, to launch a 2D grid, where each element has 64 threads assigned you would use the following:
+
+    .. code-block:: python
+
+        wp.launch_tiled(kernel, [M, N], inputs=[...], block_dim=64)
+
+    Which is equivalent to the following:
+
+    .. code-block:: python
+
+        wp.launch(kernel, [M, N, 64], inputs=[...], block_dim=64)
+
+    Inside your kernel code you can retrieve the first two indices of the thread as usual, ignoring the implicit third dimension if desired:
+
+    .. code-block:: python
+
+        @wp.kernel
+        def compute()
+
+            i, j = wp.tid()
+
+            ...
+
+    The required ``block_dim`` argument is appended to the launch dimensions.
+    On CPU, values from 2 through 1024 are effective only when
+    :attr:`warp.config.enable_cpu_blocks` is ``True``; otherwise they resolve
+    to 1. ``None`` and non-positive values select the per-device default.
+    """
+    ...
+
+@over
+def launch_tiled(kernel: Any, *args: Any, dim: _builtins.int | Sequence[_builtins.int], block_dim: _builtins.int | None, record_cmd: Literal[True], **kwargs: Any) -> Launch:
+    """A helper method for launching a grid with an extra trailing dimension equal to the block size.
+
+    For example, to launch a 2D grid, where each element has 64 threads assigned you would use the following:
+
+    .. code-block:: python
+
+        wp.launch_tiled(kernel, [M, N], inputs=[...], block_dim=64)
+
+    Which is equivalent to the following:
+
+    .. code-block:: python
+
+        wp.launch(kernel, [M, N, 64], inputs=[...], block_dim=64)
+
+    Inside your kernel code you can retrieve the first two indices of the thread as usual, ignoring the implicit third dimension if desired:
+
+    .. code-block:: python
+
+        @wp.kernel
+        def compute()
+
+            i, j = wp.tid()
+
+            ...
+
+    The required ``block_dim`` argument is appended to the launch dimensions.
+    On CPU, values from 2 through 1024 are effective only when
+    :attr:`warp.config.enable_cpu_blocks` is ``True``; otherwise they resolve
+    to 1. ``None`` and non-positive values select the per-device default.
+    """
+    ...
+
+@over
+def launch_tiled(kernel: Any, *args: Any, dim: _builtins.int | Sequence[_builtins.int], block_dim: _builtins.int | None, record_cmd: _builtins.bool=False, **kwargs: Any) -> Launch | None:
+    """A helper method for launching a grid with an extra trailing dimension equal to the block size.
+
+    For example, to launch a 2D grid, where each element has 64 threads assigned you would use the following:
+
+    .. code-block:: python
+
+        wp.launch_tiled(kernel, [M, N], inputs=[...], block_dim=64)
+
+    Which is equivalent to the following:
+
+    .. code-block:: python
+
+        wp.launch(kernel, [M, N, 64], inputs=[...], block_dim=64)
+
+    Inside your kernel code you can retrieve the first two indices of the thread as usual, ignoring the implicit third dimension if desired:
+
+    .. code-block:: python
+
+        @wp.kernel
+        def compute()
+
+            i, j = wp.tid()
+
+            ...
+
+    The required ``block_dim`` argument is appended to the launch dimensions.
+    On CPU, values from 2 through 1024 are effective only when
+    :attr:`warp.config.enable_cpu_blocks` is ``True``; otherwise they resolve
+    to 1. ``None`` and non-positive values select the per-device default.
+    """
+    ...
 from warp._src.context import get_cuda_kernel_properties as get_cuda_kernel_properties
 from warp._src.context import get_suggested_block_size as get_suggested_block_size
 from warp._src.context import synchronize as synchronize
@@ -7924,7 +8440,7 @@ def tile_query_valid(query: MeshQueryAABBTiled) -> bool:
         all-negative batch."""
     ...
 
-def tile_stack(capacity: int32 | int, dtype: Any) -> TileStack[Any, Any]:
+def tile_stack[D](capacity: int32 | _builtins.int, dtype: type[D]) -> TileStack[D, Any]:
     """Allocate a cooperative thread-block stack in shared memory.
 
     Every thread of the block sees the same stack: :func:`~warp.tile_stack_push` and
@@ -7991,7 +8507,7 @@ def tile_stack(capacity: int32 | int, dtype: Any) -> TileStack[Any, Any]:
             [6, 7, 8, 9]"""
     ...
 
-def tile_stack_push(s: Any, value: Any, has_value: bool | _builtins.bool) -> int:
+def tile_stack_push[D](s: TileStack[D, Any], value: D, has_value: bool | _builtins.bool) -> int:
     """Push a value onto a tile stack.
 
     Every thread in the block must reach this call. Pushed values are visible to the whole block
@@ -8015,7 +8531,7 @@ def tile_stack_push(s: Any, value: Any, has_value: bool | _builtins.bool) -> int
     See :func:`~warp.tile_stack` for a usage example."""
     ...
 
-def tile_stack_pop(s: Any) -> tuple[Any, int]:
+def tile_stack_pop[D](s: TileStack[D, Any]) -> tuple[D, int]:
     """Pop a value from a tile stack.
 
     Every thread in the block must reach this call. Popping an empty stack is harmless.
@@ -8033,7 +8549,7 @@ def tile_stack_pop(s: Any) -> tuple[Any, int]:
     See :func:`~warp.tile_stack` for a usage example."""
     ...
 
-def tile_stack_clear(s: Any) -> None:
+def tile_stack_clear(s: TileStack[Any, Any]) -> None:
     """Reset a tile stack to empty.
 
     The next push starts at slot 0. Every thread in the block must reach this call.
@@ -8044,7 +8560,7 @@ def tile_stack_clear(s: Any) -> None:
     See :func:`~warp.tile_stack` for a usage example."""
     ...
 
-def tile_stack_count(s: Any) -> int:
+def tile_stack_count(s: TileStack[Any, Any]) -> int:
     """Return the current number of elements in a tile stack.
 
     May be called by one thread or from divergent control flow. The value is uniform
@@ -8917,7 +9433,7 @@ def mesh_eval_velocity(id: uint64, face: int32 | int, bary_u: float32 | float, b
     ...
 
 @over
-def hash_grid_query(id: uint64, point: vec3f, max_dist: float32 | float) -> HashGridQuery:
+def hash_grid_query(id: uint64, point: vec3f, max_dist: float32 | float) -> HashGridQuery[float32]:
     """Construct a point query against a :class:`warp.HashGrid`.
 
     Returns a query that iterates over candidate neighbors of ``point``: every point in the grid
@@ -8965,8 +9481,8 @@ def hash_grid_query(id: uint64, point: vec3f, max_dist: float32 | float) -> Hash
     ...
 
 @over
-def hash_grid_query(id: uint64, point: vec3f, max_dist: float32 | float, group: int32 | int) -> HashGridQuery:
-    """Construct a point query against a :class:`warp.HashGrid`, restricted to one point group.
+def hash_grid_query(id: uint64, point: vec3f, max_dist: float32 | float, group: int32 | int) -> HashGridQuery[float32]:
+    """Construct a point query against a :class:`warp.HashGrid`.
 
     Returns a query that iterates over candidate neighbors of ``point``: every point in the grid
     cells overlapped by the box from ``point - max_dist`` to ``point + max_dist``. These are
@@ -8975,27 +9491,53 @@ def hash_grid_query(id: uint64, point: vec3f, max_dist: float32 | float, group: 
     :func:`hash_grid_query_next`. ``point`` must be in the same coordinate space as the points the
     grid was built from (see :class:`warp.HashGrid`).
 
-    If the grid was built with groups, only points whose group id equals ``group`` are returned as
-    candidates; any ``int32`` value is a valid group id. Omit the ``group`` argument to visit all
-    groups, matching ungrouped behavior. Unlike grouped BVH queries, grouped hash-grid queries do
-    not require a root lookup; pass the group id directly.
-
     Args:
         id: The :class:`warp.HashGrid` identifier
         point: The query point
         max_dist: The query radius
-        group: Restrict candidates to points built with this group id
 
     Returns:
-        A hash-grid query object to pass to :func:`hash_grid_query_next`."""
+        A hash-grid query object to pass to :func:`hash_grid_query_next`.
+
+    Example:
+
+        .. testcode::
+
+            @wp.kernel
+            def count_neighbors(grid_id: wp.uint64, pts: wp.array[wp.vec3], radius: wp.float32, out_count: wp.array[wp.int32]):
+                i = wp.tid()
+                p = pts[i]
+                query = wp.hash_grid_query(grid_id, p, radius)
+                index = int(0)
+                n = int(0)
+                while wp.hash_grid_query_next(query, index):
+                    if wp.length(p - pts[index]) <= radius:
+                        n += 1
+                out_count[i] = n
+
+            points = wp.array([[0,0,0],[0.1,0,0],[0.5,0,0],[2.0,0,0]], dtype=wp.vec3)
+            grid = wp.HashGrid(dim_x=8, dim_y=8, dim_z=8)
+            grid.build(points=points, radius=0.3)
+
+            out_count = wp.zeros(4, dtype=wp.int32)
+            wp.launch(count_neighbors, dim=4, inputs=[grid.id, points, 0.3], outputs=[out_count])
+            print(out_count.numpy())
+
+        .. testoutput::
+
+            [2 2 1 1]"""
     ...
 
 @over
-def hash_grid_query(id: uint64, point: vec3h, max_dist: float16) -> HashGridQuery:
-    """Construct a point query against a :class:`warp.HashGrid` (float16 precision).
+def hash_grid_query(id: uint64, point: vec3h, max_dist: float16) -> HashGridQuery[float16]:
+    """Construct a point query against a :class:`warp.HashGrid`.
 
-    The ``float16`` overload of :func:`hash_grid_query`. Behavior and usage match the default
-    ``float32`` overload; see it for details and a usage example.
+    Returns a query that iterates over candidate neighbors of ``point``: every point in the grid
+    cells overlapped by the box from ``point - max_dist`` to ``point + max_dist``. These are
+    *candidates* — the grid does not test distance, so some are farther than ``max_dist``; filter
+    by actual distance yourself. Advance the query and read each candidate's index with
+    :func:`hash_grid_query_next`. ``point`` must be in the same coordinate space as the points the
+    grid was built from (see :class:`warp.HashGrid`).
 
     Args:
         id: The :class:`warp.HashGrid` identifier
@@ -9003,37 +9545,95 @@ def hash_grid_query(id: uint64, point: vec3h, max_dist: float16) -> HashGridQuer
         max_dist: The query radius
 
     Returns:
-        A hash-grid query object to pass to :func:`hash_grid_query_next`."""
+        A hash-grid query object to pass to :func:`hash_grid_query_next`.
+
+    Example:
+
+        .. testcode::
+
+            @wp.kernel
+            def count_neighbors(grid_id: wp.uint64, pts: wp.array[wp.vec3], radius: wp.float32, out_count: wp.array[wp.int32]):
+                i = wp.tid()
+                p = pts[i]
+                query = wp.hash_grid_query(grid_id, p, radius)
+                index = int(0)
+                n = int(0)
+                while wp.hash_grid_query_next(query, index):
+                    if wp.length(p - pts[index]) <= radius:
+                        n += 1
+                out_count[i] = n
+
+            points = wp.array([[0,0,0],[0.1,0,0],[0.5,0,0],[2.0,0,0]], dtype=wp.vec3)
+            grid = wp.HashGrid(dim_x=8, dim_y=8, dim_z=8)
+            grid.build(points=points, radius=0.3)
+
+            out_count = wp.zeros(4, dtype=wp.int32)
+            wp.launch(count_neighbors, dim=4, inputs=[grid.id, points, 0.3], outputs=[out_count])
+            print(out_count.numpy())
+
+        .. testoutput::
+
+            [2 2 1 1]"""
     ...
 
 @over
-def hash_grid_query(id: uint64, point: vec3h, max_dist: float16, group: int32 | int) -> HashGridQuery:
-    """Construct a point query against a :class:`warp.HashGrid`, restricted to one point group (float16 precision).
+def hash_grid_query(id: uint64, point: vec3h, max_dist: float16, group: int32 | int) -> HashGridQuery[float16]:
+    """Construct a point query against a :class:`warp.HashGrid`.
 
-    The ``float16`` overload of :func:`hash_grid_query`. Behavior and usage match the default
-    ``float32`` overload; see it for details and a usage example.
-
-    If the grid was built with groups, only points whose group id equals ``group`` are returned as
-    candidates; any ``int32`` value is a valid group id. Omit the ``group`` argument to visit all
-    groups, matching ungrouped behavior. Unlike grouped BVH queries, grouped hash-grid queries do
-    not require a root lookup; pass the group id directly.
+    Returns a query that iterates over candidate neighbors of ``point``: every point in the grid
+    cells overlapped by the box from ``point - max_dist`` to ``point + max_dist``. These are
+    *candidates* — the grid does not test distance, so some are farther than ``max_dist``; filter
+    by actual distance yourself. Advance the query and read each candidate's index with
+    :func:`hash_grid_query_next`. ``point`` must be in the same coordinate space as the points the
+    grid was built from (see :class:`warp.HashGrid`).
 
     Args:
         id: The :class:`warp.HashGrid` identifier
         point: The query point
         max_dist: The query radius
-        group: Restrict candidates to points built with this group id
 
     Returns:
-        A hash-grid query object to pass to :func:`hash_grid_query_next`."""
+        A hash-grid query object to pass to :func:`hash_grid_query_next`.
+
+    Example:
+
+        .. testcode::
+
+            @wp.kernel
+            def count_neighbors(grid_id: wp.uint64, pts: wp.array[wp.vec3], radius: wp.float32, out_count: wp.array[wp.int32]):
+                i = wp.tid()
+                p = pts[i]
+                query = wp.hash_grid_query(grid_id, p, radius)
+                index = int(0)
+                n = int(0)
+                while wp.hash_grid_query_next(query, index):
+                    if wp.length(p - pts[index]) <= radius:
+                        n += 1
+                out_count[i] = n
+
+            points = wp.array([[0,0,0],[0.1,0,0],[0.5,0,0],[2.0,0,0]], dtype=wp.vec3)
+            grid = wp.HashGrid(dim_x=8, dim_y=8, dim_z=8)
+            grid.build(points=points, radius=0.3)
+
+            out_count = wp.zeros(4, dtype=wp.int32)
+            wp.launch(count_neighbors, dim=4, inputs=[grid.id, points, 0.3], outputs=[out_count])
+            print(out_count.numpy())
+
+        .. testoutput::
+
+            [2 2 1 1]"""
     ...
 
 @over
-def hash_grid_query(id: uint64, point: vec3d, max_dist: float64) -> HashGridQuery:
-    """Construct a point query against a :class:`warp.HashGrid` (float64 precision).
+def hash_grid_query(id: uint64, point: vec3d, max_dist: float64) -> HashGridQuery[float64]:
+    """Construct a point query against a :class:`warp.HashGrid`.
 
-    The ``float64`` overload of :func:`hash_grid_query`. Behavior and usage match the default
-    ``float32`` overload; see it for details and a usage example.
+    Returns a query that iterates over candidate neighbors of ``point``: every point in the grid
+    cells overlapped by the box from ``point - max_dist`` to ``point + max_dist``. These are
+    *candidates* — the grid does not test distance, so some are farther than ``max_dist``; filter
+    by actual distance yourself. Advance the query and read each candidate's index with
+    :func:`hash_grid_query_next`. ``point`` must be in the same coordinate space as the points the
+    grid was built from (see :class:`warp.HashGrid`).
 
     Args:
         id: The :class:`warp.HashGrid` identifier
@@ -9041,32 +9641,86 @@ def hash_grid_query(id: uint64, point: vec3d, max_dist: float64) -> HashGridQuer
         max_dist: The query radius
 
     Returns:
-        A hash-grid query object to pass to :func:`hash_grid_query_next`."""
+        A hash-grid query object to pass to :func:`hash_grid_query_next`.
+
+    Example:
+
+        .. testcode::
+
+            @wp.kernel
+            def count_neighbors(grid_id: wp.uint64, pts: wp.array[wp.vec3], radius: wp.float32, out_count: wp.array[wp.int32]):
+                i = wp.tid()
+                p = pts[i]
+                query = wp.hash_grid_query(grid_id, p, radius)
+                index = int(0)
+                n = int(0)
+                while wp.hash_grid_query_next(query, index):
+                    if wp.length(p - pts[index]) <= radius:
+                        n += 1
+                out_count[i] = n
+
+            points = wp.array([[0,0,0],[0.1,0,0],[0.5,0,0],[2.0,0,0]], dtype=wp.vec3)
+            grid = wp.HashGrid(dim_x=8, dim_y=8, dim_z=8)
+            grid.build(points=points, radius=0.3)
+
+            out_count = wp.zeros(4, dtype=wp.int32)
+            wp.launch(count_neighbors, dim=4, inputs=[grid.id, points, 0.3], outputs=[out_count])
+            print(out_count.numpy())
+
+        .. testoutput::
+
+            [2 2 1 1]"""
     ...
 
 @over
-def hash_grid_query(id: uint64, point: vec3d, max_dist: float64, group: int32 | int) -> HashGridQuery:
-    """Construct a point query against a :class:`warp.HashGrid`, restricted to one point group (float64 precision).
+def hash_grid_query(id: uint64, point: vec3d, max_dist: float64, group: int32 | int) -> HashGridQuery[float64]:
+    """Construct a point query against a :class:`warp.HashGrid`.
 
-    The ``float64`` overload of :func:`hash_grid_query`. Behavior and usage match the default
-    ``float32`` overload; see it for details and a usage example.
-
-    If the grid was built with groups, only points whose group id equals ``group`` are returned as
-    candidates; any ``int32`` value is a valid group id. Omit the ``group`` argument to visit all
-    groups, matching ungrouped behavior. Unlike grouped BVH queries, grouped hash-grid queries do
-    not require a root lookup; pass the group id directly.
+    Returns a query that iterates over candidate neighbors of ``point``: every point in the grid
+    cells overlapped by the box from ``point - max_dist`` to ``point + max_dist``. These are
+    *candidates* — the grid does not test distance, so some are farther than ``max_dist``; filter
+    by actual distance yourself. Advance the query and read each candidate's index with
+    :func:`hash_grid_query_next`. ``point`` must be in the same coordinate space as the points the
+    grid was built from (see :class:`warp.HashGrid`).
 
     Args:
         id: The :class:`warp.HashGrid` identifier
         point: The query point
         max_dist: The query radius
-        group: Restrict candidates to points built with this group id
 
     Returns:
-        A hash-grid query object to pass to :func:`hash_grid_query_next`."""
+        A hash-grid query object to pass to :func:`hash_grid_query_next`.
+
+    Example:
+
+        .. testcode::
+
+            @wp.kernel
+            def count_neighbors(grid_id: wp.uint64, pts: wp.array[wp.vec3], radius: wp.float32, out_count: wp.array[wp.int32]):
+                i = wp.tid()
+                p = pts[i]
+                query = wp.hash_grid_query(grid_id, p, radius)
+                index = int(0)
+                n = int(0)
+                while wp.hash_grid_query_next(query, index):
+                    if wp.length(p - pts[index]) <= radius:
+                        n += 1
+                out_count[i] = n
+
+            points = wp.array([[0,0,0],[0.1,0,0],[0.5,0,0],[2.0,0,0]], dtype=wp.vec3)
+            grid = wp.HashGrid(dim_x=8, dim_y=8, dim_z=8)
+            grid.build(points=points, radius=0.3)
+
+            out_count = wp.zeros(4, dtype=wp.int32)
+            wp.launch(count_neighbors, dim=4, inputs=[grid.id, points, 0.3], outputs=[out_count])
+            print(out_count.numpy())
+
+        .. testoutput::
+
+            [2 2 1 1]"""
     ...
 
-def hash_grid_query_next(query: HashGridQuery, index: int32 | int) -> bool:
+def hash_grid_query_next(query: HashGridQuery[Any], index: int32 | int) -> bool:
     """Advance a hash grid query to the next candidate neighbor and report whether one was found.
 
     Writes the candidate's index to ``index`` and returns ``True``; returns ``False`` once no
@@ -11018,255 +11672,759 @@ def where[T](arr: Array[Any, IntTuple], value_if_true: T, value_if_false: T) -> 
     ...
 
 @over
-def atomic_add(arr: Array[Any] | FabricArray[Any] | IndexedFabricArray[Any], i: Int, value: Any) -> Any:
+def atomic_add[D, N0: IntVar](arr: Array[D, [N0]], i: _Idx, value: D) -> D:
     """Atomically adds ``value`` onto ``arr[i]`` and returns the original value of ``arr[i]``.
 
         This function is automatically invoked when using the syntax ``arr[i] += value``."""
     ...
 
 @over
-def atomic_add(arr: Array[Any] | FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, value: Any) -> Any:
-    """Atomically adds ``value`` onto ``arr[i,j]`` and returns the original value of ``arr[i,j]``.
+def atomic_add[D, N0: IntVar, N1: IntVar](arr: Array[D, [N0, N1]], i: _Idx, j: _Idx, value: D) -> D:
+    """Atomically adds ``value`` onto ``arr[i]`` and returns the original value of ``arr[i]``.
 
-        This function is automatically invoked when using the syntax ``arr[i,j] += value``."""
+        This function is automatically invoked when using the syntax ``arr[i] += value``."""
     ...
 
 @over
-def atomic_add(arr: Array[Any] | FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, k: Int, value: Any) -> Any:
-    """Atomically adds ``value`` onto ``arr[i,j,k]`` and returns the original value of ``arr[i,j,k]``.
+def atomic_add[D, N0: IntVar, N1: IntVar, N2: IntVar](arr: Array[D, [N0, N1, N2]], i: _Idx, j: _Idx, k: _Idx, value: D) -> D:
+    """Atomically adds ``value`` onto ``arr[i]`` and returns the original value of ``arr[i]``.
 
-        This function is automatically invoked when using the syntax ``arr[i,j,k] += value``."""
+        This function is automatically invoked when using the syntax ``arr[i] += value``."""
     ...
 
 @over
-def atomic_add(arr: Array[Any] | FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, k: Int, l: Int, value: Any) -> Any:
-    """Atomically adds ``value`` onto ``arr[i,j,k,l]`` and returns the original value of ``arr[i,j,k,l]``.
+def atomic_add[D, N0: IntVar, N1: IntVar, N2: IntVar, N3: IntVar](arr: Array[D, [N0, N1, N2, N3]], i: _Idx, j: _Idx, k: _Idx, l: _Idx, value: D) -> D:
+    """Atomically adds ``value`` onto ``arr[i]`` and returns the original value of ``arr[i]``.
 
-        This function is automatically invoked when using the syntax ``arr[i,j,k,l] += value``."""
+        This function is automatically invoked when using the syntax ``arr[i] += value``."""
     ...
 
 @over
-def atomic_sub(arr: Array[Any] | FabricArray[Any] | IndexedFabricArray[Any], i: Int, value: Any) -> Any:
+def atomic_add[D](arr: Array[D, IntTuple], i: _Idx, value: D) -> D:
+    """Atomically adds ``value`` onto ``arr[i]`` and returns the original value of ``arr[i]``.
+
+        This function is automatically invoked when using the syntax ``arr[i] += value``."""
+    ...
+
+@over
+def atomic_add[D](arr: Array[D, IntTuple], i: _Idx, j: _Idx, value: D) -> D:
+    """Atomically adds ``value`` onto ``arr[i]`` and returns the original value of ``arr[i]``.
+
+        This function is automatically invoked when using the syntax ``arr[i] += value``."""
+    ...
+
+@over
+def atomic_add[D](arr: Array[D, IntTuple], i: _Idx, j: _Idx, k: _Idx, value: D) -> D:
+    """Atomically adds ``value`` onto ``arr[i]`` and returns the original value of ``arr[i]``.
+
+        This function is automatically invoked when using the syntax ``arr[i] += value``."""
+    ...
+
+@over
+def atomic_add[D](arr: Array[D, IntTuple], i: _Idx, j: _Idx, k: _Idx, l: _Idx, value: D) -> D:
+    """Atomically adds ``value`` onto ``arr[i]`` and returns the original value of ``arr[i]``.
+
+        This function is automatically invoked when using the syntax ``arr[i] += value``."""
+    ...
+
+@over
+def atomic_add(arr: FabricArray[Any] | IndexedFabricArray[Any], i: Int, value: Any) -> Any:
+    """Atomically adds ``value`` onto ``arr[i]`` and returns the original value of ``arr[i]``.
+
+        This function is automatically invoked when using the syntax ``arr[i] += value``."""
+    ...
+
+@over
+def atomic_add(arr: FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, value: Any) -> Any:
+    """Atomically adds ``value`` onto ``arr[i]`` and returns the original value of ``arr[i]``.
+
+        This function is automatically invoked when using the syntax ``arr[i] += value``."""
+    ...
+
+@over
+def atomic_add(arr: FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, k: Int, value: Any) -> Any:
+    """Atomically adds ``value`` onto ``arr[i]`` and returns the original value of ``arr[i]``.
+
+        This function is automatically invoked when using the syntax ``arr[i] += value``."""
+    ...
+
+@over
+def atomic_add(arr: FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, k: Int, l: Int, value: Any) -> Any:
+    """Atomically adds ``value`` onto ``arr[i]`` and returns the original value of ``arr[i]``.
+
+        This function is automatically invoked when using the syntax ``arr[i] += value``."""
+    ...
+
+@over
+def atomic_sub[D, N0: IntVar](arr: Array[D, [N0]], i: _Idx, value: D) -> D:
     """Atomically subtracts ``value`` onto ``arr[i]`` and returns the original value of ``arr[i]``.
 
         This function is automatically invoked when using the syntax ``arr[i] -= value``."""
     ...
 
 @over
-def atomic_sub(arr: Array[Any] | FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, value: Any) -> Any:
-    """Atomically subtracts ``value`` onto ``arr[i,j]`` and returns the original value of ``arr[i,j]``.
+def atomic_sub[D, N0: IntVar, N1: IntVar](arr: Array[D, [N0, N1]], i: _Idx, j: _Idx, value: D) -> D:
+    """Atomically subtracts ``value`` onto ``arr[i]`` and returns the original value of ``arr[i]``.
 
-        This function is automatically invoked when using the syntax ``arr[i,j] -= value``."""
+        This function is automatically invoked when using the syntax ``arr[i] -= value``."""
     ...
 
 @over
-def atomic_sub(arr: Array[Any] | FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, k: Int, value: Any) -> Any:
-    """Atomically subtracts ``value`` onto ``arr[i,j,k]`` and returns the original value of ``arr[i,j,k]``.
+def atomic_sub[D, N0: IntVar, N1: IntVar, N2: IntVar](arr: Array[D, [N0, N1, N2]], i: _Idx, j: _Idx, k: _Idx, value: D) -> D:
+    """Atomically subtracts ``value`` onto ``arr[i]`` and returns the original value of ``arr[i]``.
 
-        This function is automatically invoked when using the syntax ``arr[i,j,k] -= value``."""
+        This function is automatically invoked when using the syntax ``arr[i] -= value``."""
     ...
 
 @over
-def atomic_sub(arr: Array[Any] | FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, k: Int, l: Int, value: Any) -> Any:
-    """Atomically subtracts ``value`` onto ``arr[i,j,k,l]`` and returns the original value of ``arr[i,j,k,l]``.
+def atomic_sub[D, N0: IntVar, N1: IntVar, N2: IntVar, N3: IntVar](arr: Array[D, [N0, N1, N2, N3]], i: _Idx, j: _Idx, k: _Idx, l: _Idx, value: D) -> D:
+    """Atomically subtracts ``value`` onto ``arr[i]`` and returns the original value of ``arr[i]``.
 
-        This function is automatically invoked when using the syntax ``arr[i,j,k,l] -= value``."""
+        This function is automatically invoked when using the syntax ``arr[i] -= value``."""
     ...
 
 @over
-def atomic_min(arr: Array[Any] | FabricArray[Any] | IndexedFabricArray[Any], i: Int, value: Any) -> Any:
+def atomic_sub[D](arr: Array[D, IntTuple], i: _Idx, value: D) -> D:
+    """Atomically subtracts ``value`` onto ``arr[i]`` and returns the original value of ``arr[i]``.
+
+        This function is automatically invoked when using the syntax ``arr[i] -= value``."""
+    ...
+
+@over
+def atomic_sub[D](arr: Array[D, IntTuple], i: _Idx, j: _Idx, value: D) -> D:
+    """Atomically subtracts ``value`` onto ``arr[i]`` and returns the original value of ``arr[i]``.
+
+        This function is automatically invoked when using the syntax ``arr[i] -= value``."""
+    ...
+
+@over
+def atomic_sub[D](arr: Array[D, IntTuple], i: _Idx, j: _Idx, k: _Idx, value: D) -> D:
+    """Atomically subtracts ``value`` onto ``arr[i]`` and returns the original value of ``arr[i]``.
+
+        This function is automatically invoked when using the syntax ``arr[i] -= value``."""
+    ...
+
+@over
+def atomic_sub[D](arr: Array[D, IntTuple], i: _Idx, j: _Idx, k: _Idx, l: _Idx, value: D) -> D:
+    """Atomically subtracts ``value`` onto ``arr[i]`` and returns the original value of ``arr[i]``.
+
+        This function is automatically invoked when using the syntax ``arr[i] -= value``."""
+    ...
+
+@over
+def atomic_sub(arr: FabricArray[Any] | IndexedFabricArray[Any], i: Int, value: Any) -> Any:
+    """Atomically subtracts ``value`` onto ``arr[i]`` and returns the original value of ``arr[i]``.
+
+        This function is automatically invoked when using the syntax ``arr[i] -= value``."""
+    ...
+
+@over
+def atomic_sub(arr: FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, value: Any) -> Any:
+    """Atomically subtracts ``value`` onto ``arr[i]`` and returns the original value of ``arr[i]``.
+
+        This function is automatically invoked when using the syntax ``arr[i] -= value``."""
+    ...
+
+@over
+def atomic_sub(arr: FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, k: Int, value: Any) -> Any:
+    """Atomically subtracts ``value`` onto ``arr[i]`` and returns the original value of ``arr[i]``.
+
+        This function is automatically invoked when using the syntax ``arr[i] -= value``."""
+    ...
+
+@over
+def atomic_sub(arr: FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, k: Int, l: Int, value: Any) -> Any:
+    """Atomically subtracts ``value`` onto ``arr[i]`` and returns the original value of ``arr[i]``.
+
+        This function is automatically invoked when using the syntax ``arr[i] -= value``."""
+    ...
+
+@over
+def atomic_min[D, N0: IntVar](arr: Array[D, [N0]], i: _Idx, value: D) -> D:
     """Compute the minimum of ``value`` and ``arr[i]``, atomically update the array, and return the old value.
 
         The operation is only atomic on a per-component basis for vectors and matrices."""
     ...
 
 @over
-def atomic_min(arr: Array[Any] | FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, value: Any) -> Any:
-    """Compute the minimum of ``value`` and ``arr[i,j]``, atomically update the array, and return the old value.
+def atomic_min[D, N0: IntVar, N1: IntVar](arr: Array[D, [N0, N1]], i: _Idx, j: _Idx, value: D) -> D:
+    """Compute the minimum of ``value`` and ``arr[i]``, atomically update the array, and return the old value.
 
         The operation is only atomic on a per-component basis for vectors and matrices."""
     ...
 
 @over
-def atomic_min(arr: Array[Any] | FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, k: Int, value: Any) -> Any:
-    """Compute the minimum of ``value`` and ``arr[i,j,k]``, atomically update the array, and return the old value.
+def atomic_min[D, N0: IntVar, N1: IntVar, N2: IntVar](arr: Array[D, [N0, N1, N2]], i: _Idx, j: _Idx, k: _Idx, value: D) -> D:
+    """Compute the minimum of ``value`` and ``arr[i]``, atomically update the array, and return the old value.
 
         The operation is only atomic on a per-component basis for vectors and matrices."""
     ...
 
 @over
-def atomic_min(arr: Array[Any] | FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, k: Int, l: Int, value: Any) -> Any:
-    """Compute the minimum of ``value`` and ``arr[i,j,k,l]``, atomically update the array, and return the old value.
+def atomic_min[D, N0: IntVar, N1: IntVar, N2: IntVar, N3: IntVar](arr: Array[D, [N0, N1, N2, N3]], i: _Idx, j: _Idx, k: _Idx, l: _Idx, value: D) -> D:
+    """Compute the minimum of ``value`` and ``arr[i]``, atomically update the array, and return the old value.
 
         The operation is only atomic on a per-component basis for vectors and matrices."""
     ...
 
 @over
-def atomic_max(arr: Array[Any] | FabricArray[Any] | IndexedFabricArray[Any], i: Int, value: Any) -> Any:
+def atomic_min[D](arr: Array[D, IntTuple], i: _Idx, value: D) -> D:
+    """Compute the minimum of ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        The operation is only atomic on a per-component basis for vectors and matrices."""
+    ...
+
+@over
+def atomic_min[D](arr: Array[D, IntTuple], i: _Idx, j: _Idx, value: D) -> D:
+    """Compute the minimum of ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        The operation is only atomic on a per-component basis for vectors and matrices."""
+    ...
+
+@over
+def atomic_min[D](arr: Array[D, IntTuple], i: _Idx, j: _Idx, k: _Idx, value: D) -> D:
+    """Compute the minimum of ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        The operation is only atomic on a per-component basis for vectors and matrices."""
+    ...
+
+@over
+def atomic_min[D](arr: Array[D, IntTuple], i: _Idx, j: _Idx, k: _Idx, l: _Idx, value: D) -> D:
+    """Compute the minimum of ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        The operation is only atomic on a per-component basis for vectors and matrices."""
+    ...
+
+@over
+def atomic_min(arr: FabricArray[Any] | IndexedFabricArray[Any], i: Int, value: Any) -> Any:
+    """Compute the minimum of ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        The operation is only atomic on a per-component basis for vectors and matrices."""
+    ...
+
+@over
+def atomic_min(arr: FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, value: Any) -> Any:
+    """Compute the minimum of ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        The operation is only atomic on a per-component basis for vectors and matrices."""
+    ...
+
+@over
+def atomic_min(arr: FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, k: Int, value: Any) -> Any:
+    """Compute the minimum of ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        The operation is only atomic on a per-component basis for vectors and matrices."""
+    ...
+
+@over
+def atomic_min(arr: FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, k: Int, l: Int, value: Any) -> Any:
+    """Compute the minimum of ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        The operation is only atomic on a per-component basis for vectors and matrices."""
+    ...
+
+@over
+def atomic_max[D, N0: IntVar](arr: Array[D, [N0]], i: _Idx, value: D) -> D:
     """Compute the maximum of ``value`` and ``arr[i]``, atomically update the array, and return the old value.
 
         The operation is only atomic on a per-component basis for vectors and matrices."""
     ...
 
 @over
-def atomic_max(arr: Array[Any] | FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, value: Any) -> Any:
-    """Compute the maximum of ``value`` and ``arr[i,j]``, atomically update the array, and return the old value.
+def atomic_max[D, N0: IntVar, N1: IntVar](arr: Array[D, [N0, N1]], i: _Idx, j: _Idx, value: D) -> D:
+    """Compute the maximum of ``value`` and ``arr[i]``, atomically update the array, and return the old value.
 
         The operation is only atomic on a per-component basis for vectors and matrices."""
     ...
 
 @over
-def atomic_max(arr: Array[Any] | FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, k: Int, value: Any) -> Any:
-    """Compute the maximum of ``value`` and ``arr[i,j,k]``, atomically update the array, and return the old value.
+def atomic_max[D, N0: IntVar, N1: IntVar, N2: IntVar](arr: Array[D, [N0, N1, N2]], i: _Idx, j: _Idx, k: _Idx, value: D) -> D:
+    """Compute the maximum of ``value`` and ``arr[i]``, atomically update the array, and return the old value.
 
         The operation is only atomic on a per-component basis for vectors and matrices."""
     ...
 
 @over
-def atomic_max(arr: Array[Any] | FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, k: Int, l: Int, value: Any) -> Any:
-    """Compute the maximum of ``value`` and ``arr[i,j,k,l]``, atomically update the array, and return the old value.
+def atomic_max[D, N0: IntVar, N1: IntVar, N2: IntVar, N3: IntVar](arr: Array[D, [N0, N1, N2, N3]], i: _Idx, j: _Idx, k: _Idx, l: _Idx, value: D) -> D:
+    """Compute the maximum of ``value`` and ``arr[i]``, atomically update the array, and return the old value.
 
         The operation is only atomic on a per-component basis for vectors and matrices."""
     ...
 
 @over
-def atomic_cas(arr: Array[Any] | FabricArray[Any] | IndexedFabricArray[Any], i: Int, compare: Any, value: Any) -> Any:
+def atomic_max[D](arr: Array[D, IntTuple], i: _Idx, value: D) -> D:
+    """Compute the maximum of ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        The operation is only atomic on a per-component basis for vectors and matrices."""
+    ...
+
+@over
+def atomic_max[D](arr: Array[D, IntTuple], i: _Idx, j: _Idx, value: D) -> D:
+    """Compute the maximum of ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        The operation is only atomic on a per-component basis for vectors and matrices."""
+    ...
+
+@over
+def atomic_max[D](arr: Array[D, IntTuple], i: _Idx, j: _Idx, k: _Idx, value: D) -> D:
+    """Compute the maximum of ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        The operation is only atomic on a per-component basis for vectors and matrices."""
+    ...
+
+@over
+def atomic_max[D](arr: Array[D, IntTuple], i: _Idx, j: _Idx, k: _Idx, l: _Idx, value: D) -> D:
+    """Compute the maximum of ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        The operation is only atomic on a per-component basis for vectors and matrices."""
+    ...
+
+@over
+def atomic_max(arr: FabricArray[Any] | IndexedFabricArray[Any], i: Int, value: Any) -> Any:
+    """Compute the maximum of ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        The operation is only atomic on a per-component basis for vectors and matrices."""
+    ...
+
+@over
+def atomic_max(arr: FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, value: Any) -> Any:
+    """Compute the maximum of ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        The operation is only atomic on a per-component basis for vectors and matrices."""
+    ...
+
+@over
+def atomic_max(arr: FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, k: Int, value: Any) -> Any:
+    """Compute the maximum of ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        The operation is only atomic on a per-component basis for vectors and matrices."""
+    ...
+
+@over
+def atomic_max(arr: FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, k: Int, l: Int, value: Any) -> Any:
+    """Compute the maximum of ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        The operation is only atomic on a per-component basis for vectors and matrices."""
+    ...
+
+@over
+def atomic_cas[D, N0: IntVar](arr: Array[D, [N0]], i: _Idx, compare: D, value: D) -> D:
     """Atomically compare and swap ``value`` with ``arr[i]`` if ``arr[i]`` equals ``compare``, and return the old value.
 
         The operation is only atomic on a per-component basis for vectors and matrices."""
     ...
 
 @over
-def atomic_cas(arr: Array[Any] | FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, compare: Any, value: Any) -> Any:
-    """Atomically compare and swap ``value`` with ``arr[i,j]`` if ``arr[i,j]`` equals ``compare``, and return the old value.
+def atomic_cas[D, N0: IntVar, N1: IntVar](arr: Array[D, [N0, N1]], i: _Idx, j: _Idx, compare: D, value: D) -> D:
+    """Atomically compare and swap ``value`` with ``arr[i]`` if ``arr[i]`` equals ``compare``, and return the old value.
 
         The operation is only atomic on a per-component basis for vectors and matrices."""
     ...
 
 @over
-def atomic_cas(arr: Array[Any] | FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, k: Int, compare: Any, value: Any) -> Any:
-    """Atomically compare and swap ``value`` with ``arr[i,j,k]`` if ``arr[i,j,k]`` equals ``compare``, and return the old value.
+def atomic_cas[D, N0: IntVar, N1: IntVar, N2: IntVar](arr: Array[D, [N0, N1, N2]], i: _Idx, j: _Idx, k: _Idx, compare: D, value: D) -> D:
+    """Atomically compare and swap ``value`` with ``arr[i]`` if ``arr[i]`` equals ``compare``, and return the old value.
 
         The operation is only atomic on a per-component basis for vectors and matrices."""
     ...
 
 @over
-def atomic_cas(arr: Array[Any] | FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, k: Int, l: Int, compare: Any, value: Any) -> Any:
-    """Atomically compare and swap ``value`` with ``arr[i,j,k,l]`` if ``arr[i,j,k,l]`` equals ``compare``, and return the old value.
+def atomic_cas[D, N0: IntVar, N1: IntVar, N2: IntVar, N3: IntVar](arr: Array[D, [N0, N1, N2, N3]], i: _Idx, j: _Idx, k: _Idx, l: _Idx, compare: D, value: D) -> D:
+    """Atomically compare and swap ``value`` with ``arr[i]`` if ``arr[i]`` equals ``compare``, and return the old value.
 
         The operation is only atomic on a per-component basis for vectors and matrices."""
     ...
 
 @over
-def atomic_exch(arr: Array[Any] | FabricArray[Any] | IndexedFabricArray[Any], i: Int, value: Any) -> Any:
+def atomic_cas[D](arr: Array[D, IntTuple], i: _Idx, compare: D, value: D) -> D:
+    """Atomically compare and swap ``value`` with ``arr[i]`` if ``arr[i]`` equals ``compare``, and return the old value.
+
+        The operation is only atomic on a per-component basis for vectors and matrices."""
+    ...
+
+@over
+def atomic_cas[D](arr: Array[D, IntTuple], i: _Idx, j: _Idx, compare: D, value: D) -> D:
+    """Atomically compare and swap ``value`` with ``arr[i]`` if ``arr[i]`` equals ``compare``, and return the old value.
+
+        The operation is only atomic on a per-component basis for vectors and matrices."""
+    ...
+
+@over
+def atomic_cas[D](arr: Array[D, IntTuple], i: _Idx, j: _Idx, k: _Idx, compare: D, value: D) -> D:
+    """Atomically compare and swap ``value`` with ``arr[i]`` if ``arr[i]`` equals ``compare``, and return the old value.
+
+        The operation is only atomic on a per-component basis for vectors and matrices."""
+    ...
+
+@over
+def atomic_cas[D](arr: Array[D, IntTuple], i: _Idx, j: _Idx, k: _Idx, l: _Idx, compare: D, value: D) -> D:
+    """Atomically compare and swap ``value`` with ``arr[i]`` if ``arr[i]`` equals ``compare``, and return the old value.
+
+        The operation is only atomic on a per-component basis for vectors and matrices."""
+    ...
+
+@over
+def atomic_cas(arr: FabricArray[Any] | IndexedFabricArray[Any], i: Int, compare: Any, value: Any) -> Any:
+    """Atomically compare and swap ``value`` with ``arr[i]`` if ``arr[i]`` equals ``compare``, and return the old value.
+
+        The operation is only atomic on a per-component basis for vectors and matrices."""
+    ...
+
+@over
+def atomic_cas(arr: FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, compare: Any, value: Any) -> Any:
+    """Atomically compare and swap ``value`` with ``arr[i]`` if ``arr[i]`` equals ``compare``, and return the old value.
+
+        The operation is only atomic on a per-component basis for vectors and matrices."""
+    ...
+
+@over
+def atomic_cas(arr: FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, k: Int, compare: Any, value: Any) -> Any:
+    """Atomically compare and swap ``value`` with ``arr[i]`` if ``arr[i]`` equals ``compare``, and return the old value.
+
+        The operation is only atomic on a per-component basis for vectors and matrices."""
+    ...
+
+@over
+def atomic_cas(arr: FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, k: Int, l: Int, compare: Any, value: Any) -> Any:
+    """Atomically compare and swap ``value`` with ``arr[i]`` if ``arr[i]`` equals ``compare``, and return the old value.
+
+        The operation is only atomic on a per-component basis for vectors and matrices."""
+    ...
+
+@over
+def atomic_exch[D, N0: IntVar](arr: Array[D, [N0]], i: _Idx, value: D) -> D:
     """Atomically exchange ``value`` with ``arr[i]`` and return the old value.
 
         The operation is only atomic on a per-component basis for vectors and matrices."""
     ...
 
 @over
-def atomic_exch(arr: Array[Any] | FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, value: Any) -> Any:
-    """Atomically exchange ``value`` with ``arr[i,j]`` and return the old value.
+def atomic_exch[D, N0: IntVar, N1: IntVar](arr: Array[D, [N0, N1]], i: _Idx, j: _Idx, value: D) -> D:
+    """Atomically exchange ``value`` with ``arr[i]`` and return the old value.
 
         The operation is only atomic on a per-component basis for vectors and matrices."""
     ...
 
 @over
-def atomic_exch(arr: Array[Any] | FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, k: Int, value: Any) -> Any:
-    """Atomically exchange ``value`` with ``arr[i,j,k]`` and return the old value.
+def atomic_exch[D, N0: IntVar, N1: IntVar, N2: IntVar](arr: Array[D, [N0, N1, N2]], i: _Idx, j: _Idx, k: _Idx, value: D) -> D:
+    """Atomically exchange ``value`` with ``arr[i]`` and return the old value.
 
         The operation is only atomic on a per-component basis for vectors and matrices."""
     ...
 
 @over
-def atomic_exch(arr: Array[Any] | FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, k: Int, l: Int, value: Any) -> Any:
-    """Atomically exchange ``value`` with ``arr[i,j,k,l]`` and return the old value.
+def atomic_exch[D, N0: IntVar, N1: IntVar, N2: IntVar, N3: IntVar](arr: Array[D, [N0, N1, N2, N3]], i: _Idx, j: _Idx, k: _Idx, l: _Idx, value: D) -> D:
+    """Atomically exchange ``value`` with ``arr[i]`` and return the old value.
 
         The operation is only atomic on a per-component basis for vectors and matrices."""
     ...
 
 @over
-def atomic_and(arr: Array[Any] | FabricArray[Any] | IndexedFabricArray[Any], i: Int, value: Any) -> Any:
+def atomic_exch[D](arr: Array[D, IntTuple], i: _Idx, value: D) -> D:
+    """Atomically exchange ``value`` with ``arr[i]`` and return the old value.
+
+        The operation is only atomic on a per-component basis for vectors and matrices."""
+    ...
+
+@over
+def atomic_exch[D](arr: Array[D, IntTuple], i: _Idx, j: _Idx, value: D) -> D:
+    """Atomically exchange ``value`` with ``arr[i]`` and return the old value.
+
+        The operation is only atomic on a per-component basis for vectors and matrices."""
+    ...
+
+@over
+def atomic_exch[D](arr: Array[D, IntTuple], i: _Idx, j: _Idx, k: _Idx, value: D) -> D:
+    """Atomically exchange ``value`` with ``arr[i]`` and return the old value.
+
+        The operation is only atomic on a per-component basis for vectors and matrices."""
+    ...
+
+@over
+def atomic_exch[D](arr: Array[D, IntTuple], i: _Idx, j: _Idx, k: _Idx, l: _Idx, value: D) -> D:
+    """Atomically exchange ``value`` with ``arr[i]`` and return the old value.
+
+        The operation is only atomic on a per-component basis for vectors and matrices."""
+    ...
+
+@over
+def atomic_exch(arr: FabricArray[Any] | IndexedFabricArray[Any], i: Int, value: Any) -> Any:
+    """Atomically exchange ``value`` with ``arr[i]`` and return the old value.
+
+        The operation is only atomic on a per-component basis for vectors and matrices."""
+    ...
+
+@over
+def atomic_exch(arr: FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, value: Any) -> Any:
+    """Atomically exchange ``value`` with ``arr[i]`` and return the old value.
+
+        The operation is only atomic on a per-component basis for vectors and matrices."""
+    ...
+
+@over
+def atomic_exch(arr: FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, k: Int, value: Any) -> Any:
+    """Atomically exchange ``value`` with ``arr[i]`` and return the old value.
+
+        The operation is only atomic on a per-component basis for vectors and matrices."""
+    ...
+
+@over
+def atomic_exch(arr: FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, k: Int, l: Int, value: Any) -> Any:
+    """Atomically exchange ``value`` with ``arr[i]`` and return the old value.
+
+        The operation is only atomic on a per-component basis for vectors and matrices."""
+    ...
+
+@over
+def atomic_and[D, N0: IntVar](arr: Array[D, [N0]], i: _Idx, value: D) -> D:
     """Atomically performs a bitwise AND between ``value`` and ``arr[i]``, atomically update the array, and return the old value.
 
         This function is automatically invoked when using the syntax ``arr[i] &= value``."""
     ...
 
 @over
-def atomic_and(arr: Array[Any] | FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, value: Any) -> Any:
-    """Atomically performs a bitwise AND between ``value`` and ``arr[i,j]``, atomically update the array, and return the old value.
+def atomic_and[D, N0: IntVar, N1: IntVar](arr: Array[D, [N0, N1]], i: _Idx, j: _Idx, value: D) -> D:
+    """Atomically performs a bitwise AND between ``value`` and ``arr[i]``, atomically update the array, and return the old value.
 
-        This function is automatically invoked when using the syntax ``arr[i,j] &= value``."""
+        This function is automatically invoked when using the syntax ``arr[i] &= value``."""
     ...
 
 @over
-def atomic_and(arr: Array[Any] | FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, k: Int, value: Any) -> Any:
-    """Atomically performs a bitwise AND between ``value`` and ``arr[i,j,k]``, atomically update the array, and return the old value.
+def atomic_and[D, N0: IntVar, N1: IntVar, N2: IntVar](arr: Array[D, [N0, N1, N2]], i: _Idx, j: _Idx, k: _Idx, value: D) -> D:
+    """Atomically performs a bitwise AND between ``value`` and ``arr[i]``, atomically update the array, and return the old value.
 
-        This function is automatically invoked when using the syntax ``arr[i,j,k] &= value``."""
+        This function is automatically invoked when using the syntax ``arr[i] &= value``."""
     ...
 
 @over
-def atomic_and(arr: Array[Any] | FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, k: Int, l: Int, value: Any) -> Any:
-    """Atomically performs a bitwise AND between ``value`` and ``arr[i,j,k,l]``, atomically update the array, and return the old value.
+def atomic_and[D, N0: IntVar, N1: IntVar, N2: IntVar, N3: IntVar](arr: Array[D, [N0, N1, N2, N3]], i: _Idx, j: _Idx, k: _Idx, l: _Idx, value: D) -> D:
+    """Atomically performs a bitwise AND between ``value`` and ``arr[i]``, atomically update the array, and return the old value.
 
-        This function is automatically invoked when using the syntax ``arr[i,j,k,l] &= value``."""
+        This function is automatically invoked when using the syntax ``arr[i] &= value``."""
     ...
 
 @over
-def atomic_or(arr: Array[Any] | FabricArray[Any] | IndexedFabricArray[Any], i: Int, value: Any) -> Any:
+def atomic_and[D](arr: Array[D, IntTuple], i: _Idx, value: D) -> D:
+    """Atomically performs a bitwise AND between ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        This function is automatically invoked when using the syntax ``arr[i] &= value``."""
+    ...
+
+@over
+def atomic_and[D](arr: Array[D, IntTuple], i: _Idx, j: _Idx, value: D) -> D:
+    """Atomically performs a bitwise AND between ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        This function is automatically invoked when using the syntax ``arr[i] &= value``."""
+    ...
+
+@over
+def atomic_and[D](arr: Array[D, IntTuple], i: _Idx, j: _Idx, k: _Idx, value: D) -> D:
+    """Atomically performs a bitwise AND between ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        This function is automatically invoked when using the syntax ``arr[i] &= value``."""
+    ...
+
+@over
+def atomic_and[D](arr: Array[D, IntTuple], i: _Idx, j: _Idx, k: _Idx, l: _Idx, value: D) -> D:
+    """Atomically performs a bitwise AND between ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        This function is automatically invoked when using the syntax ``arr[i] &= value``."""
+    ...
+
+@over
+def atomic_and(arr: FabricArray[Any] | IndexedFabricArray[Any], i: Int, value: Any) -> Any:
+    """Atomically performs a bitwise AND between ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        This function is automatically invoked when using the syntax ``arr[i] &= value``."""
+    ...
+
+@over
+def atomic_and(arr: FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, value: Any) -> Any:
+    """Atomically performs a bitwise AND between ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        This function is automatically invoked when using the syntax ``arr[i] &= value``."""
+    ...
+
+@over
+def atomic_and(arr: FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, k: Int, value: Any) -> Any:
+    """Atomically performs a bitwise AND between ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        This function is automatically invoked when using the syntax ``arr[i] &= value``."""
+    ...
+
+@over
+def atomic_and(arr: FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, k: Int, l: Int, value: Any) -> Any:
+    """Atomically performs a bitwise AND between ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        This function is automatically invoked when using the syntax ``arr[i] &= value``."""
+    ...
+
+@over
+def atomic_or[D, N0: IntVar](arr: Array[D, [N0]], i: _Idx, value: D) -> D:
     """Atomically performs a bitwise OR between ``value`` and ``arr[i]``, atomically update the array, and return the old value.
 
         This function is automatically invoked when using the syntax ``arr[i] |= value``."""
     ...
 
 @over
-def atomic_or(arr: Array[Any] | FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, value: Any) -> Any:
-    """Atomically performs a bitwise OR between ``value`` and ``arr[i,j]``, atomically update the array, and return the old value.
+def atomic_or[D, N0: IntVar, N1: IntVar](arr: Array[D, [N0, N1]], i: _Idx, j: _Idx, value: D) -> D:
+    """Atomically performs a bitwise OR between ``value`` and ``arr[i]``, atomically update the array, and return the old value.
 
-        This function is automatically invoked when using the syntax ``arr[i,j] |= value``."""
+        This function is automatically invoked when using the syntax ``arr[i] |= value``."""
     ...
 
 @over
-def atomic_or(arr: Array[Any] | FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, k: Int, value: Any) -> Any:
-    """Atomically performs a bitwise OR between ``value`` and ``arr[i,j,k]``, atomically update the array, and return the old value.
+def atomic_or[D, N0: IntVar, N1: IntVar, N2: IntVar](arr: Array[D, [N0, N1, N2]], i: _Idx, j: _Idx, k: _Idx, value: D) -> D:
+    """Atomically performs a bitwise OR between ``value`` and ``arr[i]``, atomically update the array, and return the old value.
 
-        This function is automatically invoked when using the syntax ``arr[i,j,k] |= value``."""
+        This function is automatically invoked when using the syntax ``arr[i] |= value``."""
     ...
 
 @over
-def atomic_or(arr: Array[Any] | FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, k: Int, l: Int, value: Any) -> Any:
-    """Atomically performs a bitwise OR between ``value`` and ``arr[i,j,k,l]``, atomically update the array, and return the old value.
+def atomic_or[D, N0: IntVar, N1: IntVar, N2: IntVar, N3: IntVar](arr: Array[D, [N0, N1, N2, N3]], i: _Idx, j: _Idx, k: _Idx, l: _Idx, value: D) -> D:
+    """Atomically performs a bitwise OR between ``value`` and ``arr[i]``, atomically update the array, and return the old value.
 
-        This function is automatically invoked when using the syntax ``arr[i,j,k,l] |= value``."""
+        This function is automatically invoked when using the syntax ``arr[i] |= value``."""
     ...
 
 @over
-def atomic_xor(arr: Array[Any] | FabricArray[Any] | IndexedFabricArray[Any], i: Int, value: Any) -> Any:
+def atomic_or[D](arr: Array[D, IntTuple], i: _Idx, value: D) -> D:
+    """Atomically performs a bitwise OR between ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        This function is automatically invoked when using the syntax ``arr[i] |= value``."""
+    ...
+
+@over
+def atomic_or[D](arr: Array[D, IntTuple], i: _Idx, j: _Idx, value: D) -> D:
+    """Atomically performs a bitwise OR between ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        This function is automatically invoked when using the syntax ``arr[i] |= value``."""
+    ...
+
+@over
+def atomic_or[D](arr: Array[D, IntTuple], i: _Idx, j: _Idx, k: _Idx, value: D) -> D:
+    """Atomically performs a bitwise OR between ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        This function is automatically invoked when using the syntax ``arr[i] |= value``."""
+    ...
+
+@over
+def atomic_or[D](arr: Array[D, IntTuple], i: _Idx, j: _Idx, k: _Idx, l: _Idx, value: D) -> D:
+    """Atomically performs a bitwise OR between ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        This function is automatically invoked when using the syntax ``arr[i] |= value``."""
+    ...
+
+@over
+def atomic_or(arr: FabricArray[Any] | IndexedFabricArray[Any], i: Int, value: Any) -> Any:
+    """Atomically performs a bitwise OR between ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        This function is automatically invoked when using the syntax ``arr[i] |= value``."""
+    ...
+
+@over
+def atomic_or(arr: FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, value: Any) -> Any:
+    """Atomically performs a bitwise OR between ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        This function is automatically invoked when using the syntax ``arr[i] |= value``."""
+    ...
+
+@over
+def atomic_or(arr: FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, k: Int, value: Any) -> Any:
+    """Atomically performs a bitwise OR between ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        This function is automatically invoked when using the syntax ``arr[i] |= value``."""
+    ...
+
+@over
+def atomic_or(arr: FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, k: Int, l: Int, value: Any) -> Any:
+    """Atomically performs a bitwise OR between ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        This function is automatically invoked when using the syntax ``arr[i] |= value``."""
+    ...
+
+@over
+def atomic_xor[D, N0: IntVar](arr: Array[D, [N0]], i: _Idx, value: D) -> D:
     """Atomically performs a bitwise XOR between ``value`` and ``arr[i]``, atomically update the array, and return the old value.
 
         This function is automatically invoked when using the syntax ``arr[i] ^= value``."""
     ...
 
 @over
-def atomic_xor(arr: Array[Any] | FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, value: Any) -> Any:
-    """Atomically performs a bitwise XOR between ``value`` and ``arr[i,j]``, atomically update the array, and return the old value.
+def atomic_xor[D, N0: IntVar, N1: IntVar](arr: Array[D, [N0, N1]], i: _Idx, j: _Idx, value: D) -> D:
+    """Atomically performs a bitwise XOR between ``value`` and ``arr[i]``, atomically update the array, and return the old value.
 
-        This function is automatically invoked when using the syntax ``arr[i,j] ^= value``."""
+        This function is automatically invoked when using the syntax ``arr[i] ^= value``."""
     ...
 
 @over
-def atomic_xor(arr: Array[Any] | FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, k: Int, value: Any) -> Any:
-    """Atomically performs a bitwise XOR between ``value`` and ``arr[i,j,k]``, atomically update the array, and return the old value.
+def atomic_xor[D, N0: IntVar, N1: IntVar, N2: IntVar](arr: Array[D, [N0, N1, N2]], i: _Idx, j: _Idx, k: _Idx, value: D) -> D:
+    """Atomically performs a bitwise XOR between ``value`` and ``arr[i]``, atomically update the array, and return the old value.
 
-        This function is automatically invoked when using the syntax ``arr[i,j,k] ^= value``."""
+        This function is automatically invoked when using the syntax ``arr[i] ^= value``."""
     ...
 
 @over
-def atomic_xor(arr: Array[Any] | FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, k: Int, l: Int, value: Any) -> Any:
-    """Atomically performs a bitwise XOR between ``value`` and ``arr[i,j,k,l]``, atomically update the array, and return the old value.
+def atomic_xor[D, N0: IntVar, N1: IntVar, N2: IntVar, N3: IntVar](arr: Array[D, [N0, N1, N2, N3]], i: _Idx, j: _Idx, k: _Idx, l: _Idx, value: D) -> D:
+    """Atomically performs a bitwise XOR between ``value`` and ``arr[i]``, atomically update the array, and return the old value.
 
-        This function is automatically invoked when using the syntax ``arr[i,j,k,l] ^= value``."""
+        This function is automatically invoked when using the syntax ``arr[i] ^= value``."""
+    ...
+
+@over
+def atomic_xor[D](arr: Array[D, IntTuple], i: _Idx, value: D) -> D:
+    """Atomically performs a bitwise XOR between ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        This function is automatically invoked when using the syntax ``arr[i] ^= value``."""
+    ...
+
+@over
+def atomic_xor[D](arr: Array[D, IntTuple], i: _Idx, j: _Idx, value: D) -> D:
+    """Atomically performs a bitwise XOR between ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        This function is automatically invoked when using the syntax ``arr[i] ^= value``."""
+    ...
+
+@over
+def atomic_xor[D](arr: Array[D, IntTuple], i: _Idx, j: _Idx, k: _Idx, value: D) -> D:
+    """Atomically performs a bitwise XOR between ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        This function is automatically invoked when using the syntax ``arr[i] ^= value``."""
+    ...
+
+@over
+def atomic_xor[D](arr: Array[D, IntTuple], i: _Idx, j: _Idx, k: _Idx, l: _Idx, value: D) -> D:
+    """Atomically performs a bitwise XOR between ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        This function is automatically invoked when using the syntax ``arr[i] ^= value``."""
+    ...
+
+@over
+def atomic_xor(arr: FabricArray[Any] | IndexedFabricArray[Any], i: Int, value: Any) -> Any:
+    """Atomically performs a bitwise XOR between ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        This function is automatically invoked when using the syntax ``arr[i] ^= value``."""
+    ...
+
+@over
+def atomic_xor(arr: FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, value: Any) -> Any:
+    """Atomically performs a bitwise XOR between ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        This function is automatically invoked when using the syntax ``arr[i] ^= value``."""
+    ...
+
+@over
+def atomic_xor(arr: FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, k: Int, value: Any) -> Any:
+    """Atomically performs a bitwise XOR between ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        This function is automatically invoked when using the syntax ``arr[i] ^= value``."""
+    ...
+
+@over
+def atomic_xor(arr: FabricArray[Any] | IndexedFabricArray[Any], i: Int, j: Int, k: Int, l: Int, value: Any) -> Any:
+    """Atomically performs a bitwise XOR between ``value`` and ``arr[i]``, atomically update the array, and return the old value.
+
+        This function is automatically invoked when using the syntax ``arr[i] ^= value``."""
     ...
 
 @over
@@ -12307,4 +13465,14 @@ class _ThreadIndex(int):
     """
 
     def __iter__(self) -> Iterator[int]:
+        ...
+
+class _Func[**P, R](Function):
+
+    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R:
+        ...
+
+class _FuncDecorator(_Protocol):
+
+    def __call__[**P, R](self, f: Callable[P, R], /) -> _Func[P, R]:
         ...

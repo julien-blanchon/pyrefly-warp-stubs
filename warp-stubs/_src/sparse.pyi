@@ -8,7 +8,8 @@ from __future__ import annotations
 import ctypes
 import weakref
 from functools import cache
-from typing import Any, Generic, Literal, TypeVar
+from typing import Any, overload
+from typing import Generic, Literal, TypeVar
 from numpy import eye
 import warp as wp
 import warp._src.utils
@@ -342,15 +343,21 @@ class BsrMatrix(Generic[_BlockType]):
     def __imul__(self, y):
         return bsr_scale(self, y)
 
-    def __matmul__(self, y):
-        if isinstance(y, wp.array):
-            return bsr_mv(self, y)
-        return bsr_mm(self, y)
+    @overload
+    def __matmul__(self, y: wp.array[Any]) -> wp.array[Any]:
+        ...
 
-    def __rmatmul__(self, x):
-        if isinstance(x, wp.array):
-            return bsr_mv(self, x, transpose=True)
-        return bsr_mm(x, self)
+    @overload
+    def __matmul__(self, y: BsrMatrixOrExpression[Any]) -> BsrMatrix[Any]:
+        ...
+
+    @overload
+    def __rmatmul__(self, x: wp.array[Any]) -> wp.array[Any]:
+        ...
+
+    @overload
+    def __rmatmul__(self, x: BsrMatrixOrExpression[Any]) -> BsrMatrix[Any]:
+        ...
 
     def __imatmul__(self, y):
         return bsr_mm(self, y, self)
@@ -364,6 +371,13 @@ class BsrMatrix(Generic[_BlockType]):
     def transpose(self):
         """Return a transposed copy of this matrix."""
         return bsr_transposed(self)
+    nrow: int
+    ncol: int
+    nnz: int
+    offsets: wp.array[int]
+    row_counts: wp.array[int] | None
+    columns: wp.array[int]
+    values: wp.array[Any]
 
 def _allocate_transfer_buf(device):
     if device.ordinal in _transfer_buffer_cache:
@@ -385,7 +399,7 @@ def _redeem_transfer_buf(device, buf, event):
     _all, pool = _transfer_buffer_cache[device.ordinal]
     pool.append((buf, event))
 
-def bsr_matrix_t(dtype: BlockType):
+def bsr_matrix_t(dtype: type | Any):
     dtype = type_to_warp(dtype)
     if not type_is_matrix(dtype) and dtype not in scalar_types:
         raise ValueError(f'BsrMatrix block type must be either warp matrix or scalar; got {type_repr(dtype)}')
@@ -482,7 +496,7 @@ def _bsr_set_zero_topology(bsr: BsrMatrix, topology: Literal['compact', 'padded'
         nnz = 0
     bsr.notify_nnz_changed(nnz=nnz, nnz_capacity=nnz_capacity)
 
-def bsr_zeros(rows_of_blocks: int, cols_of_blocks: int, block_type: BlockType, device: wp.DeviceLike=None, *, topology: Literal['compact', 'padded'] | None=None, row_capacity: int | Array[int] | None=None, nnz_capacity: int | None=None) -> BsrMatrix:
+def bsr_zeros(rows_of_blocks: int, cols_of_blocks: int, block_type: type | Any, device: wp.DeviceLike=None, *, topology: Literal['compact', 'padded'] | None=None, row_capacity: int | Array[int] | None=None, nnz_capacity: int | None=None) -> BsrMatrix:
     """Construct and return an empty BSR or CSR matrix with the given shape.
 
     Args:
@@ -804,7 +818,7 @@ def _bsr_set_from_triplets_padded_accumulate_values(dest_compact_blocks: wp.arra
     if compact_block != -1:
         dest_values[block, i, j] = _bsr_accumulate_triplet_value(compact_block, i, j, tpl_summed_offsets, tpl_summed_indices, values)
 
-def bsr_set_from_triplets(dest: BsrMatrix[BlockType[Rows, Cols, Scalar]], rows: Array[int], columns: Array[int], values: Array[Scalar | BlockType[Rows, Cols, Scalar]] | None=None, count: Array[int] | None=None, prune_numerical_zeros: bool=True, masked: bool=False, topology: Literal['compact', 'masked', 'padded'] | None=None):
+def bsr_set_from_triplets(dest: BsrMatrix[BlockType[Rows, Cols, Scalar]], rows: Array[int], columns: Array[int], values: Array[Any] | None=None, count: Array[int] | None=None, prune_numerical_zeros: bool=True, masked: bool=False, topology: Literal['compact', 'masked', 'padded'] | None=None):
     """Fill a BSR matrix with values defined by coordinate-oriented (COO) triplets, discarding existing blocks.
 
     The first dimension of the three input arrays must match and indicates the number of COO triplets.
@@ -912,7 +926,7 @@ def bsr_set_from_triplets(dest: BsrMatrix[BlockType[Rows, Cols, Scalar]], rows: 
     if not masked:
         _bsr_set_compact_row_counts(dest)
 
-def bsr_from_triplets(rows_of_blocks: int, cols_of_blocks: int, rows: Array[int], columns: Array[int], values: Array[Scalar | BlockType[Rows, Cols, Scalar]], prune_numerical_zeros: bool=True):
+def bsr_from_triplets(rows_of_blocks: int, cols_of_blocks: int, rows: Array[int], columns: Array[int], values: Array[Any], prune_numerical_zeros: bool=True):
     """Construct a BSR matrix with values defined by coordinate-oriented (COO) triplets.
 
     The first dimension of the three input arrays must match and indicates the number of COO triplets.
@@ -1127,7 +1141,6 @@ def _extract_matrix_and_scale(bsr: BsrMatrixOrExpression):
     raise ValueError('Argument cannot be interpreted as a BsrMatrix')
 
 @_typing_overload
-@wp.func
 def bsr_row_index(offsets: wp.array(dtype=int), row_count: int, block_index: int) -> int:
     """Return the row containing a block in compact BSR/CSR storage, or -1 if no such row exists.
 
@@ -1142,7 +1155,6 @@ def bsr_row_index(offsets: wp.array(dtype=int), row_count: int, block_index: int
     return wp.where(block_index < offsets[row_count], wp.lower_bound(offsets, 0, row_count + 1, block_index + 1), 0) - 1
 
 @_typing_overload
-@wp.func
 def bsr_row_index(offsets: wp.array(dtype=int), row_count: int, block_index: int, row_counts: wp.array(dtype=int)) -> int:
     """Return the row containing an active block in a capacity-aware BSR matrix, or -1 if no such row exists.
 
@@ -1167,7 +1179,6 @@ def _bsr_row_block_index(col: int, row_beg: int, row_end: int, bsr_columns: wp.a
     return wp.where(bsr_columns[block_index] == col, block_index, -1)
 
 @_typing_overload
-@wp.func
 def bsr_block_index(row: int, col: int, bsr_offsets: wp.array(dtype=int), bsr_columns: wp.array(dtype=int)) -> int:
     """Return the index of the block at block-coordinates (row, col), or -1 if no such block exists.
 
@@ -1188,7 +1199,6 @@ def bsr_block_index(row: int, col: int, bsr_offsets: wp.array(dtype=int), bsr_co
     return _bsr_row_block_index(col, row_beg, row_end, bsr_columns)
 
 @_typing_overload
-@wp.func
 def bsr_block_index(row: int, col: int, bsr_offsets: wp.array(dtype=int), bsr_columns: wp.array(dtype=int), bsr_row_counts: wp.array(dtype=int)) -> int:
     """Return the active block index in a capacity-aware BSR matrix, or -1 if no such block exists.
 
@@ -1658,27 +1668,14 @@ def _bsr_get_diag_kernel(scale: Any, A_offsets: wp.array(dtype=int), A_row_count
     if diag != -1:
         out[row, br, bc] = scale * A_values[diag, br, bc]
 
-def bsr_get_diag(A: BsrMatrixOrExpression[BlockType], out: Array[BlockType] | None=None) -> Array[BlockType]:
+def bsr_get_diag(A: BsrMatrixOrExpression[Any], out: wp.array[Any] | None=None) -> wp.array[Any]:
     """Return the array of blocks that constitute the diagonal of a sparse matrix.
 
     Args:
         A: The sparse matrix from which to extract the diagonal.
         out: If provided, the array into which to store the diagonal blocks.
     """
-    A, scale = _extract_matrix_and_scale(A)
-    dim = min(A.nrow, A.ncol)
-    if out is None:
-        out = wp.zeros(shape=(dim,), dtype=A.values.dtype, device=A.values.device)
-    else:
-        if not types_equal(out.dtype, A.values.dtype):
-            raise ValueError(f'Output array must have type {A.values.dtype}, got {out.dtype}')
-        if out.device != A.values.device:
-            raise ValueError(f'Output array must reside on device {A.values.device}, got {out.device}')
-        if out.shape[0] < dim:
-            raise ValueError(f'Output array must be of length at least {dim}, got {out.shape[0]}')
-        out.zero_()
-    wp.launch(kernel=_bsr_get_diag_kernel, dim=(dim, *A.block_shape), device=A.values.device, inputs=[A.scalar_type(scale), A.offsets, A.row_counts, A.columns, A.scalar_values, _as_3d_array(out, A.block_shape)])
-    return out
+    ...
 
 @wp.kernel(enable_backward=False)
 def _bsr_set_diag_kernel(nnz: int, A_offsets: wp.array(dtype=int), A_columns: wp.array(dtype=int)):
@@ -1728,7 +1725,7 @@ def bsr_set_diag(A: BsrMatrix[BlockType], diag: BlockType | Array[BlockType], ro
     elif diag is not None:
         A.values.fill_(diag)
 
-def bsr_diag(diag: BlockType | Array[BlockType] | None=None, rows_of_blocks: int | None=None, cols_of_blocks: int | None=None, block_type: BlockType | None=None, device=None) -> BsrMatrix[BlockType]:
+def bsr_diag(diag: BlockType | Array[BlockType] | None=None, rows_of_blocks: int | None=None, cols_of_blocks: int | None=None, block_type: type | None=None, device=None) -> BsrMatrix[BlockType]:
     """Create and return a block-diagonal BSR matrix from an given block value or array of block values.
 
     Args:
@@ -1785,7 +1782,7 @@ def bsr_set_identity(A: BsrMatrix, rows_of_blocks: int | None=None) -> None:
         identity = eye(A.block_shape[0])
     bsr_set_diag(A, diag=identity, rows_of_blocks=rows_of_blocks, cols_of_blocks=rows_of_blocks)
 
-def bsr_identity(rows_of_blocks: int, block_type: BlockType[Rows, Rows, Scalar], device: wp.DeviceLike=None) -> BsrMatrix[BlockType[Rows, Rows, Scalar]]:
+def bsr_identity(rows_of_blocks: int, block_type: type, device: wp.DeviceLike=None) -> BsrMatrix[BlockType[Rows, Rows, Scalar]]:
     """Create and return a square identity matrix.
 
     Args:
@@ -2659,7 +2656,7 @@ def _vec_array_view(array: wp.array, dtype: type, expected_scalar_count: int) ->
     view._ref = array
     return view
 
-def bsr_mv(A: BsrMatrixOrExpression[BlockType[Rows, Cols, Scalar]], x: Array[Vector[Scalar, Cols] | Scalar], y: Array[Vector[Scalar, Rows] | Scalar] | None=None, alpha: Scalar=1.0, beta: Scalar=0.0, transpose: bool=False, work_buffer: Array[Vector[Scalar, Rows] | Scalar] | None=None, tile_size: int=0) -> Array[Vector[Scalar, Rows] | Scalar]:
+def bsr_mv(A: BsrMatrixOrExpression[Any], x: wp.array[Any], y: wp.array[Any] | None=None, alpha: Any=1.0, beta: Any=0.0, transpose: bool=False, work_buffer: wp.array[Any] | None=None, tile_size: int=0) -> wp.array[Any]:
     """Perform the sparse matrix-vector product ``y := alpha * A * x + beta * y`` and return ``y``.
 
     The ``x`` and ``y`` vectors are allowed to alias.
@@ -2678,59 +2675,6 @@ def bsr_mv(A: BsrMatrixOrExpression[BlockType[Rows, Cols, Scalar]], x: Array[Vec
           If negative, disable tile-based computation. Defaults to ``0``, which determines whether to
           use tiles using using an heuristic based on the matrix shape and number of non-zeros..
     """
-    A, A_scale = _extract_matrix_and_scale(A)
-    alpha *= A_scale
-    if transpose:
-        block_shape = (A.block_shape[1], A.block_shape[0])
-        nrow, ncol = (A.ncol, A.nrow)
-    else:
-        block_shape = A.block_shape
-        nrow, ncol = (A.nrow, A.ncol)
-    if y is None:
-        y_vec_len = block_shape[0]
-        y_dtype = A.scalar_type if y_vec_len == 1 else wp.types.vector(length=y_vec_len, dtype=A.scalar_type)
-        y = wp.empty(shape=(nrow,), device=A.values.device, dtype=y_dtype, requires_grad=x.requires_grad)
-        beta = 0.0
-    alpha = A.scalar_type(alpha)
-    beta = A.scalar_type(beta)
-    device = A.values.device
-    if A.values.device != x.device or A.values.device != y.device:
-        raise ValueError(f'A, x, and y must reside on the same device, got {A.values.device}, {x.device} and {y.device}')
-    if x.ptr == y.ptr:
-        if work_buffer is None:
-            work_buffer = wp.empty_like(y)
-        elif work_buffer.size < y.size:
-            raise ValueError(f'Work buffer size is insufficient, needs to be at least {y.size}, got {work_buffer.size}')
-        elif not types_equal(work_buffer.dtype, y.dtype):
-            raise ValueError(f'Work buffer must have same data type as y, {type_repr(y.dtype)} vs {type_repr(work_buffer.dtype)}')
-        wp.copy(dest=work_buffer, src=y, count=y.size)
-        x = work_buffer
-    try:
-        x_view = _vec_array_view(x, A.scalar_type, expected_scalar_count=ncol * block_shape[1])
-    except ValueError as err:
-        raise ValueError("Incompatible 'x' vector for bsr_mv") from err
-    try:
-        y_view = _vec_array_view(y, A.scalar_type, expected_scalar_count=nrow * block_shape[0])
-    except ValueError as err:
-        raise ValueError("Incompatible 'y' vector for bsr_mv") from err
-    if tile_size > 0:
-        use_tiles = True
-    elif tile_size < 0:
-        use_tiles = False
-    else:
-        tile_size = 64
-        use_tiles = device.is_cuda and A.nnz * A.block_size > 2 * tile_size * A.shape[0]
-    if transpose:
-        if beta.value == 0.0:
-            y.zero_()
-        elif beta.value != 1.0:
-            wp.launch(kernel=_bsr_scale_1d_kernel, device=y.device, dim=y_view.shape[0], inputs=[beta, y_view])
-        if alpha.value != 0.0:
-            wp.launch(kernel=make_bsr_mv_transpose_kernel(block_rows=block_shape[1]), device=A.values.device, dim=(A.nnz, block_shape[0]), inputs=[alpha, A.nrow, A.offsets, A.row_counts, A.columns, A.scalar_values, x_view, y_view])
-    elif use_tiles:
-        wp.launch(kernel=make_bsr_mv_tiled_kernel(tile_size), device=A.values.device, dim=(nrow, block_shape[0], tile_size), block_dim=tile_size, inputs=[alpha, A.offsets, A.row_counts, A.columns, A.scalar_values, x_view, beta, y_view])
-    else:
-        wp.launch(kernel=make_bsr_mv_kernel(block_cols=block_shape[1]), device=A.values.device, dim=(nrow, block_shape[0]), inputs=[alpha, A.offsets, A.row_counts, A.columns, A.scalar_values, x_view, beta, y_view])
-    return y
+    ...
 wp._src.context.register_api_function(bsr_block_index, module='warp.sparse')
 wp._src.context.register_api_function(bsr_row_index, module='warp.sparse')

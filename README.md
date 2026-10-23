@@ -269,14 +269,27 @@ the overrides also fix these:
 - `for i in wp.hash_grid_query(...)` is iterable; `wp.where`/`wp.select` keep
   the value type; `tile_*_solve_inplace` accept 2D right-hand sides;
   `tile_fft` and the `*_indexed` functions accept any element type;
-  `wp.indexedarray1d[...]`–`4d[...]` work in annotations; `fem.Grid2D`/`Grid3D`
-  and the renderers accept the vector values Warp's examples pass them.
+  `fem.Grid2D`/`Grid3D` and the renderers accept the vector values Warp's
+  examples pass them.
+- Host objects: `@wp.kernel` is a `wp.Kernel` and `@wp.func` a `wp.Function`
+  (still callable with its signature); `wp.launch(..., record_cmd=True)` is a
+  `Launch`; `wp.ScopedCapture().graph` replays with `wp.capture_launch`;
+  `launch_tiled` requires `dim=` and `block_dim=` keywords, as Warp does;
+  `BsrMatrix` fields (`nrow`, `values`, ...), `A @ x` and `bsr_mv` are typed;
+  `wp.from_torch`/`from_dlpack` return arrays; `wp.utils.array_sum` returns a
+  NumPy scalar (or array, for vector dtypes); `Tape.gradients`, `Volume`
+  voxel queries and `wp.Volume.allocate(min=(...), ...)` are typed.
+- Kernel values: atomics (`wp.atomic_add` & co) return the previous element
+  and require a value of the array's dtype (a `float64` array with `1.0` is an
+  error, as in Warp); `wp.static(x)` keeps `x`'s type; `wp.HashGridQuery[wp.float64]`
+  is a type; fabric array elements and `wp.tile_stack` values are typed.
 
-On Warp's own 92 example scripts, Pyrefly reports **370 errors with these stubs
-versus 2145 without**. Nine errors are new: one real bug in the examples
-(`range(num_bodies / TILE_SIZE)` passes a float), four where
-`example_diffusion_3d.py` passes 3D bounds to a 2D helper annotated `wp.vec2`,
-and four from a Pyrefly bug (below). See `tools/compare_examples.py`.
+On Warp's own 92 example scripts, Pyrefly reports **311 errors with these stubs
+versus 2145 without**. Ten errors are new: one real bug in the examples
+(`range(num_bodies / TILE_SIZE)` passes a float), one possible `None`
+(`fem/utils.py` adds to `array.ptr`, which is `None` for an empty array), four
+where `example_diffusion_3d.py` passes 3D bounds to a 2D helper annotated
+`wp.vec2`, and four from a Pyrefly bug (below). See `tools/compare_examples.py`.
 
 ## Known limitations
 
@@ -311,6 +324,15 @@ and four from a Pyrefly bug (below). See `tools/compare_examples.py`.
   length- or dtype-tracked.
 - `wp.spatial_vector` is a function in upstream's stubs (the kernel
   constructor), so it cannot be used as a type; use `wp.spatial_vectorf`.
+- Multi-dimensional indexed arrays in kernel signatures: Warp only accepts
+  `wp.indexedarray[float, 2]` (`wp.indexedarray2d` is a function, and Warp raises
+  on `wp.indexedarray2d[float]`), and the second argument cannot be expressed as
+  a shape. `wp.indexedarray[float]` works.
+- Call-style annotations (`x: wp.array(dtype=float)`) are not type expressions;
+  use `wp.array[float]`. `wp.types.vector(length=3, dtype=float)` called inside a
+  kernel builds a value but is typed as the class it builds on the host.
+- `wp.ScopedCapture().graph` and `array.grad` are typed without `None`, though
+  they are `None` before capture ends / without `requires_grad`.
 - **Pyrefly 1.4 issues found while building this:**
   - A shape list spelled with `builtins.int` (`[builtins.int, builtins.int]`)
     silently becomes `Unknown`. Bare `int` works.

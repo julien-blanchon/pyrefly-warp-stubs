@@ -17,12 +17,10 @@ def project_on_seg_at_origin(q: Any, seg: Any, len_sq: Any):
     return (wp.length_sq(q - s * seg), s)
 
 @_typing_overload
-@wp.func
 def _coplanarity_tolerance(_det: wp.float32):
     return 1e-06
 
 @_typing_overload
-@wp.func
 def _coplanarity_tolerance(_det: wp.float64):
     return wp.float64(1e-12)
 

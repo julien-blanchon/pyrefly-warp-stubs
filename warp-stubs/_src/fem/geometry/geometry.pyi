@@ -781,22 +781,18 @@ class Geometry:
         return bvh.id
 
 @_typing_overload
-@wp.func
 def _bvh_vec(v: wp.vec3):
     return v
 
 @_typing_overload
-@wp.func
 def _bvh_vec(v: wp.vec2):
     return wp.vec3(v[0], v[1], 0.0)
 
 @_typing_overload
-@wp.func
 def _bvh_vec(v: wp.vec3d):
     return wp.vec3(wp.float32(v[0]), wp.float32(v[1]), wp.float32(v[2]))
 
 @_typing_overload
-@wp.func
 def _bvh_vec(v: wp.vec2d):
     return wp.vec3(wp.float32(v[0]), wp.float32(v[1]), 0.0)
 
