@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Install the pinned toolchain
+        # Exact versions: the generated stubs record the Warp version they come
+        # from, and tests/test_static.py checks they are up to date.
+        run: |
+          uv venv -p 3.13
+          uv pip install pyrefly==1.4.0 pyrefly-shape-extensions==1.4.0 warp-lang==1.18.0 numpy pytest
+      - name: Static and runtime tests (Warp kernels run on the CPU)
+        run: .venv/bin/python -m pytest -v tests/
+      - name: Build and validate the package
+        run: |
+          uv build
+          uvx twine check dist/*

@@ -1,0 +1,26 @@
+name: Publish
+
+# Creating a GitHub release runs the tests, then uploads the package to PyPI
+# with Trusted Publishing (no token: PyPI trusts this workflow, `publish.yml`,
+# in the `pypi` environment of julien-blanchon/pyrefly-warp-stubs).
+on:
+  release:
+    types: [published]
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/pyrefly-warp-stubs/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv build
+      - run: uv publish

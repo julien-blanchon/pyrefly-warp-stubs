@@ -26,8 +26,8 @@ in the editor, along with Warp's scalar and vector type rules
 Add it as a **development** dependency of a project that uses Warp:
 
 ```bash
-uv add --dev "pyrefly-warp-stubs @ git+https://github.com/julien-blanchon/pyrefly-warp-subs"
-# or: pip install "pyrefly-warp-stubs @ git+https://github.com/julien-blanchon/pyrefly-warp-subs"
+uv add --dev pyrefly-warp-stubs        # or: pip install pyrefly-warp-stubs
+# latest main: uv add --dev "pyrefly-warp-stubs @ git+https://github.com/julien-blanchon/pyrefly-warp-stubs"
 ```
 
 This installs `warp-stubs` (a PEP 561 partial stub package) and
@@ -158,16 +158,17 @@ typing = ["pyrefly-warp-stubs>=0.1"]       # users opt in: pip install mylib[typ
 
 [dependency-groups]
 dev = ["mylib[typing]", "pyrefly>=1.4", "pytest"]   # contributors get it by default
-
-[tool.uv.sources]                          # not published: where *you* get it from
-pyrefly-warp-stubs = { git = "https://github.com/julien-blanchon/pyrefly-warp-subs" }
 ```
 
-A plain `pip install mylib` still installs only Warp. The published metadata
-must name the package (`pyrefly-warp-stubs>=0.1`): build backends refuse git
-URLs in `optional-dependencies` and PyPI rejects them, so the extra only works
-for your users once `pyrefly-warp-stubs` is on PyPI. Until then, keep it in the
-dev group with the `[tool.uv.sources]` entry above.
+A plain `pip install mylib` still installs only Warp. Keep the published
+requirement a plain name (`pyrefly-warp-stubs>=0.1`): build backends refuse git
+URLs in `optional-dependencies` and PyPI rejects them. To develop against the
+latest `main` instead, add a source that is not published:
+
+```toml
+[tool.uv.sources]
+pyrefly-warp-stubs = { git = "https://github.com/julien-blanchon/pyrefly-warp-stubs" }
+```
 
 ## What is tracked
 

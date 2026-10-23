@@ -45,7 +45,7 @@ errors by cause). One agent owns the edits.
    (`def f[N: IntVar](...)`) need **Python ≥ 3.12**. On 3.10/3.11, stop and
    tell the user: shape typing isn't supported there.
 2. Install the stubs as a **dev** dependency (they are type-check-only):
-   `uv add --dev "pyrefly-warp-stubs @ git+https://github.com/julien-blanchon/pyrefly-warp-subs"`.
+   `uv add --dev pyrefly-warp-stubs` (or `pip install pyrefly-warp-stubs`).
    Pyrefly ≥ 1.4 is required.
 3. Make sure a `pyrefly.toml` or `[tool.pyrefly]` exists. Pyrefly's `basic` mode,
    used when there is no config, **hides shape errors**.

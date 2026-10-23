@@ -24,8 +24,8 @@ dependencies = [
 ]
 
 [project.urls]
-Repository = "https://github.com/julien-blanchon/pyrefly-warp-subs"
-Documentation = "https://github.com/julien-blanchon/pyrefly-warp-subs#readme"
+Repository = "https://github.com/julien-blanchon/pyrefly-warp-stubs"
+Documentation = "https://github.com/julien-blanchon/pyrefly-warp-stubs#readme"
 
 [dependency-groups]
 dev = ["pyrefly==1.4.0", "numpy", "pytest"]
