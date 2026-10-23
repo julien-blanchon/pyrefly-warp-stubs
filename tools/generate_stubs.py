@@ -59,21 +59,28 @@ import sys
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import NamedTuple
 
 ROOT = Path(__file__).resolve().parent.parent
 OVERRIDES = ROOT / "overrides"
 OUTPUT = ROOT / "warp-stubs"
 
 
+class Target(NamedTuple):
+    """A stubbed module: the Warp file it copies and the override merged into it."""
 
-def discover_targets(overrides: Path, warp_dir: Path) -> list[tuple[Path, Path]]:
-    """(upstream file, override file) pairs, one per ``.pyi`` under ``overrides``."""
+    upstream: Path
+    override: Path
+
+
+def discover_targets(overrides: Path, warp_dir: Path) -> list[Target]:
+    """One target per ``.pyi`` under ``overrides``."""
     targets = []
     for override in sorted(overrides.rglob("*.pyi")):
         relative = override.relative_to(overrides)
         for upstream in (warp_dir / relative, warp_dir / relative.with_suffix(".py")):
             if upstream.exists():
-                targets.append((upstream, override))
+                targets.append(Target(upstream, override))
                 break
         else:
             raise SystemExit(f"{override}: no upstream module {relative.with_suffix('.py')} in {warp_dir}")
@@ -172,15 +179,22 @@ def docstring_of(node: ast.AST) -> ast.stmt | None:
 DocResolver = Callable[[str, str], "ast.stmt | None"]
 
 
-def import_sources(stmt: ast.stmt) -> dict[str, tuple[str, str]]:
-    """Map each name an import statement binds to its `(module, original name)`."""
+class ImportSource(NamedTuple):
+    """Where an imported name comes from: `from <module> import <name>`."""
+
+    module: str
+    name: str
+
+
+def import_sources(stmt: ast.stmt) -> dict[str, ImportSource]:
+    """Map each name an import statement binds to where it comes from."""
     if isinstance(stmt, ast.ImportFrom):
         module = "." * stmt.level + (stmt.module or "")
-        return {a.asname or a.name: (module, a.name) for a in stmt.names if a.name != "*"}
+        return {a.asname or a.name: ImportSource(module, a.name) for a in stmt.names if a.name != "*"}
     if isinstance(stmt, ast.Import):
-        return {(a.asname or a.name).split(".")[0]: (a.name, "") for a in stmt.names}
+        return {(a.asname or a.name).split(".")[0]: ImportSource(a.name, "") for a in stmt.names}
     if isinstance(stmt, ast.If):
-        sources: dict[str, tuple[str, str]] = {}
+        sources: dict[str, ImportSource] = {}
         for nested in [*stmt.body, *stmt.orelse]:
             sources.update(import_sources(nested))
         return sources
@@ -199,7 +213,7 @@ def inherit_docstring(
         if doc is None and resolve_doc is not None:
             source = import_sources(candidate).get(override.name)
             if source is not None:
-                doc = resolve_doc(*source)
+                doc = resolve_doc(source.module, source.name)
         if doc is not None:
             override.body.insert(0, doc)
             return
@@ -235,6 +249,13 @@ def pop_config(override: list[ast.stmt]) -> tuple[GeneratorConfig, list[ast.stmt
     return config, rest
 
 
+class OverrideGroup(NamedTuple):
+    """Consecutive override statements binding the same names (an overload group)."""
+
+    names: set[str]
+    stmts: list[ast.stmt]
+
+
 def merge_body(
     upstream: list[ast.stmt],
     override: list[ast.stmt],
@@ -252,17 +273,17 @@ def merge_body(
 
     # Group override statements by the names they bind, keeping overload groups
     # (several `def`s of one name) together.
-    groups: list[tuple[set[str], list[ast.stmt]]] = []
+    groups: list[OverrideGroup] = []
     for stmt in override:
         names = bindings(stmt)
         if (
             groups
             and isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and groups[-1][0] == names
+            and groups[-1].names == names
         ):
-            groups[-1][1].append(stmt)
+            groups[-1].stmts.append(stmt)
         else:
-            groups.append((names, [stmt]))
+            groups.append(OverrideGroup(names, [stmt]))
 
     for names, stmts in groups:
         if not names:
@@ -287,8 +308,8 @@ def merge_body(
                 old = import_sources(candidate).get(name)
                 if old is not None and old != source:
                     raise ValueError(
-                        f"{where}: override import binds {name!r} from {source[0]}, but upstream "
-                        f"imports it from {old[0]}; import it under another name (`as _{name}`)"
+                        f"{where}: override import binds {name!r} from {source.module}, but upstream "
+                        f"imports it from {old.module}; import it under another name (`as _{name}`)"
                     )
         upstream_class = next(
             (s for s in replaced if isinstance(s, ast.ClassDef) and s.name in names),
@@ -561,7 +582,7 @@ def main() -> int:
         print(f"wrote {output} ({text.count(chr(10))} lines)")
 
     if stale:
-        print(f"stale generated stubs: {', '.join(stale)}; run tools/generate_stubs.py", file=sys.stderr)
+        print(f"stale generated stubs: {', '.join(map(str, stale))}; run tools/generate_stubs.py", file=sys.stderr)
         return 1
     return 0
 

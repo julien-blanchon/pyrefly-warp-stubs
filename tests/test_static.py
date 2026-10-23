@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -17,6 +18,21 @@ def run(*command: str | Path) -> None:
 
 def test_generated_stubs_are_fresh() -> None:
     run(sys.executable, "tools/generate_stubs.py", "--check")
+
+
+def test_stale_stubs_are_reported(tmp_path: Path) -> None:
+    stubs = tmp_path / "warp-stubs"
+    shutil.copytree(ROOT / "warp-stubs", stubs)
+    with (stubs / "_src" / "types.pyi").open("a") as f:
+        f.write("# drift\n")
+    result = subprocess.run(
+        [sys.executable, "tools/generate_stubs.py", "--check", "--output", str(stubs)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1
+    assert "stale generated stubs: _src/types.pyi" in result.stderr
 
 
 def test_shape_rules_validate() -> None:
