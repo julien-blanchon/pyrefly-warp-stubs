@@ -187,6 +187,7 @@ pyrefly-warp-stubs = { git = "https://github.com/julien-blanchon/pyrefly-warp-st
 | Tile math | `tile_map`, `tile_matmul` (incl. `out=`), `tile_dot`, `tile_sum`/`min`/`max`/`argmin`/`argmax`/`reduce` (with `axis`), scans |
 | Linear algebra | `tile_matmul`, `tile_cholesky`, `*_solve`, `*_solve_inplace` (float tiles, square / matching extents), `tile_diag_add` |
 | `warp.fem` | Fields, domains, operators and integrands are callable inside integrands (`u(s)`, `fem.inner(u, s)`); `@wp.func` overloads such as `fem.make_free_sample` resolve per argument type |
+| Textures, meshes, volumes | `wp.texture_sample(tex, uvw, dtype=wp.vec4)` is a `vec4` (likewise `volume_sample`, `volume_lookup`, `cast`); `wp.mesh_query_point(...)` / `mesh_query_ray` results have typed `result`, `face`, `u`, `v`, `t`, `normal`; `wp.mesh_get(id).points[i]` is a `vec3`; `for face in wp.mesh_query_aabb(...)` and hash-grid queries iterate (BVH queries do not, as in Warp); `mesh.id`, `grid.id`, ... are `uint64` |
 
 Literal sizes, module-level constants (`TILE = 64`) and `wp.constant(64)` are
 tracked; sizes only known at runtime become `int` dimensions, which keep the rank.
@@ -261,13 +262,17 @@ the overrides also fix these:
   as `i, j = wp.tid()`. It is now an `int` that can also be unpacked.
 - `warp.fem`: fields, domains, operators and integrands were not callable (360
   errors on Warp's FEM examples), and `@integrand` was typed as a union.
+- Kernel-only fields that Warp declares solely in its code-generation registry
+  (`MeshQueryPoint.face`, `Texture3D.depth`, ...) are read by the generator and
+  declared; `dtype`-driven builtins (`texture_sample`, `volume_sample`, `cast`)
+  return the requested type instead of `Any`.
 - `for i in wp.hash_grid_query(...)` is iterable; `wp.where`/`wp.select` keep
   the value type; `tile_*_solve_inplace` accept 2D right-hand sides;
   `tile_fft` and the `*_indexed` functions accept any element type;
   `wp.indexedarray1d[...]`–`4d[...]` work in annotations; `fem.Grid2D`/`Grid3D`
   and the renderers accept the vector values Warp's examples pass them.
 
-On Warp's own 92 example scripts, Pyrefly reports **415 errors with these stubs
+On Warp's own 92 example scripts, Pyrefly reports **370 errors with these stubs
 versus 2145 without**. Nine errors are new: one real bug in the examples
 (`range(num_bodies / TILE_SIZE)` passes a float), four where
 `example_diffusion_3d.py` passes 3D bounds to a 2D helper annotated `wp.vec2`,

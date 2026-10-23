@@ -9429,7 +9429,7 @@ def closest_point_edge_edge(p1: vec3f, q1: vec3f, p2: vec3f, q2: vec3f, epsilon:
             s=0.5 t=0.5 d=1.0"""
     ...
 
-def volume_sample(id: uint64, uvw: vec3f, sampling_mode: int32 | int, dtype: Any) -> Any:
+def volume_sample[D](id: uint64, uvw: vec3f, sampling_mode: int32 | int, dtype: type[D]) -> D:
     """Sample the volume of type ``dtype`` given by ``id`` at the index-space point ``uvw``.
 
     ``uvw`` is expressed in index space (voxel coordinates) and may be fractional; convert a
@@ -9483,7 +9483,7 @@ def volume_sample(id: uint64, uvw: vec3f, sampling_mode: int32 | int, dtype: Any
             0.5"""
     ...
 
-def volume_sample_grad(id: uint64, uvw: vec3f, sampling_mode: int32 | int, grad: Any, dtype: Any) -> Any:
+def volume_sample_grad[D](id: uint64, uvw: vec3f, sampling_mode: int32 | int, grad: Any, dtype: type[D]) -> D:
     """Sample the volume of type ``dtype`` given by ``id`` and its spatial gradient at the
     index-space point ``uvw``.
 
@@ -9532,7 +9532,7 @@ def volume_sample_grad(id: uint64, uvw: vec3f, sampling_mode: int32 | int, grad:
             0.5 1.0"""
     ...
 
-def volume_lookup(id: uint64, i: int32 | int, j: int32 | int, k: int32 | int, dtype: Any) -> Any:
+def volume_lookup[D](id: uint64, i: int32 | int, j: int32 | int, k: int32 | int, dtype: type[D]) -> D:
     """Return the value of type ``dtype`` stored at the voxel with integer index-space coordinates
     ``i``, ``j``, ``k``, without interpolation.
 
@@ -10050,7 +10050,7 @@ def volume_world_to_index_dir(id: uint64, xyz: vec3d) -> vec3d:
     ...
 
 @over
-def texture_sample(tex: Texture1D, u: float32 | float, dtype: Any, lod: float32 | float=-1.0) -> Any:
+def texture_sample[D](tex: Texture1D, u: float32 | float, dtype: type[D], lod: float32 | float=-1.0) -> D:
     """Sample the 1D texture at the given U coordinate.
 
     .. admonition:: Experimental
@@ -10118,23 +10118,22 @@ def texture_sample(tex: Texture1D, u: float32 | float, dtype: Any, lod: float32 
     ...
 
 @over
-def texture_sample(tex: Texture2D, uv: vec2f, dtype: Any, lod: float32 | float=-1.0) -> Any:
-    """Sample the 2D texture at the given UV coordinates.
+def texture_sample[D](tex: Texture2D, uv: vec2f, dtype: type[D], lod: float32 | float=-1.0) -> D:
+    """Sample the 1D texture at the given U coordinate.
 
     .. admonition:: Experimental
 
         The texture API is experimental and subject to change. See :class:`warp.Texture`.
 
     Args:
-        tex: The 2D texture to sample.
-        uv: UV coordinates as a :class:`warp.vec2f`. With ``normalized_coords=True``, texel
-            ``(i, j)`` at a mip level of size ``(level_width, level_height)`` is centered at
-            ``((i + 0.5) / level_width, (j + 0.5) / level_height)``. With
-            ``normalized_coords=False``, texel ``(i, j)`` of a single-level texture is centered at
-            ``(i + 0.5, j + 0.5)``. Mipmapped textures should use normalized coordinates.
-            Unnormalized coordinates for mipmapped textures are currently accepted only on the CPU
-            backend and may be unsupported in a future release. Coordinates and filtering
-            footprints beyond the texture are handled by its per-axis address modes.
+        tex: The 1D texture to sample.
+        u: U coordinate. With ``normalized_coords=True``, texel ``i`` at a mip level of width
+            ``level_width`` is centered at ``(i + 0.5) / level_width``. With
+            ``normalized_coords=False``, texel ``i`` of a single-level texture is centered at
+            ``i + 0.5``. Mipmapped textures should use normalized coordinates. Unnormalized
+            coordinates for mipmapped textures are currently accepted only on the CPU backend and
+            may be unsupported in a future release. Coordinates and filtering footprints beyond the
+            texture are handled by its address mode.
         dtype: The return type, which selects how many channels are read: ``float`` (1 channel),
             :class:`warp.vec2f` (2), or :class:`warp.vec4f` (4). Use the type matching the texture's
             :attr:`~warp.Texture.num_channels`.
@@ -10142,7 +10141,7 @@ def texture_sample(tex: Texture2D, uv: vec2f, dtype: Any, lod: float32 | float=-
             negative value also selects mip level 0. Nonnegative values are clamped to the
             texture's available mip-level range. Fractional values blend between neighbouring mip
             levels when ``mip_filter_mode`` is
-            :attr:`warp.TextureFilterMode.LINEAR`; the coordinates are evaluated independently at
+            :attr:`warp.TextureFilterMode.LINEAR`; the coordinate is evaluated independently at
             each level used in the blend. The ``lod`` argument is ignored for textures created with a single mip level.
 
     Returns:
@@ -10155,29 +10154,54 @@ def texture_sample(tex: Texture2D, uv: vec2f, dtype: Any, lod: float32 | float=-
     The filtering mode (:class:`warp.TextureFilterMode`) and the addressing of out-of-range
     coordinates (:class:`warp.TextureAddressMode`) are those set when the texture was created; see
     :class:`warp.Texture`. Currently, CUDA textures with unnormalized coordinates support only
-    ``CLAMP`` and ``BORDER`` address modes. Use normalized coordinates with ``WRAP`` or ``MIRROR``."""
+    ``CLAMP`` and ``BORDER`` address modes. Use normalized coordinates with ``WRAP`` or ``MIRROR``.
+
+    Example:
+
+        .. testcode::
+
+            @wp.kernel
+            def sample(t1: wp.Texture1D, t2: wp.Texture2D, t3: wp.Texture3D, out: wp.array[wp.float32]):
+                out[0] = wp.texture_sample(t1, 1.0, dtype=float)                    # halfway between texels 0 and 1
+                out[1] = wp.texture_sample(t2, wp.vec2(1.5, 0.5), dtype=float)      # texel (col 1, row 0)
+                out[2] = wp.texture_sample(t3, wp.vec3(1.5, 0.5, 0.5), dtype=float) # texel (col 1, row 0, slice 0)
+
+            data_1d = np.array([0.0, 10.0, 20.0, 30.0], dtype=np.float32)
+            tex_1d = wp.Texture1D(data_1d, filter_mode=wp.TextureFilterMode.LINEAR, normalized_coords=False)
+
+            data_2d = np.array([[0.0, 1.0], [2.0, 3.0]], dtype=np.float32)
+            tex_2d = wp.Texture2D(data_2d, filter_mode=wp.TextureFilterMode.CLOSEST, normalized_coords=False)
+
+            data_3d = np.arange(8, dtype=np.float32).reshape(2, 2, 2)
+            tex_3d = wp.Texture3D(data_3d, filter_mode=wp.TextureFilterMode.CLOSEST, normalized_coords=False)
+
+            out = wp.zeros(3, dtype=wp.float32)
+            wp.launch(sample, dim=1, inputs=[tex_1d, tex_2d, tex_3d], outputs=[out])
+            r = out.numpy()
+            print(round(float(r[0]), 1), round(float(r[1]), 1), round(float(r[2]), 1))
+
+        .. testoutput::
+
+            5.0 1.0 1.0"""
     ...
 
 @over
-def texture_sample(tex: Texture2D, u: float32 | float, v: float32 | float, dtype: Any, lod: float32 | float=-1.0) -> Any:
-    """Sample the 2D texture at the given UV coordinates.
+def texture_sample[D](tex: Texture2D, u: float32 | float, v: float32 | float, dtype: type[D], lod: float32 | float=-1.0) -> D:
+    """Sample the 1D texture at the given U coordinate.
 
     .. admonition:: Experimental
 
         The texture API is experimental and subject to change. See :class:`warp.Texture`.
 
     Args:
-        tex: The 2D texture to sample.
-        u: U coordinate. At a mip level of width ``level_width``, texel column ``i`` is centered at
-            ``(i + 0.5) / level_width`` when ``normalized_coords=True``. With unnormalized
-            coordinates, its center is ``i + 0.5`` in a single-level texture.
-        v: V coordinate. At a mip level of height ``level_height``, texel row ``j`` is centered at
-            ``(j + 0.5) / level_height`` when ``normalized_coords=True``. With unnormalized
-            coordinates, its center is ``j + 0.5`` in a single-level texture. Mipmapped textures
-            should use normalized coordinates. Unnormalized coordinates for mipmapped textures are
-            currently accepted only on the CPU backend and may be unsupported in a future release.
-            Coordinates and filtering footprints beyond the texture are handled by its per-axis
-            address modes.
+        tex: The 1D texture to sample.
+        u: U coordinate. With ``normalized_coords=True``, texel ``i`` at a mip level of width
+            ``level_width`` is centered at ``(i + 0.5) / level_width``. With
+            ``normalized_coords=False``, texel ``i`` of a single-level texture is centered at
+            ``i + 0.5``. Mipmapped textures should use normalized coordinates. Unnormalized
+            coordinates for mipmapped textures are currently accepted only on the CPU backend and
+            may be unsupported in a future release. Coordinates and filtering footprints beyond the
+            texture are handled by its address mode.
         dtype: The return type, which selects how many channels are read: ``float`` (1 channel),
             :class:`warp.vec2f` (2), or :class:`warp.vec4f` (4). Use the type matching the texture's
             :attr:`~warp.Texture.num_channels`.
@@ -10185,7 +10209,7 @@ def texture_sample(tex: Texture2D, u: float32 | float, v: float32 | float, dtype
             negative value also selects mip level 0. Nonnegative values are clamped to the
             texture's available mip-level range. Fractional values blend between neighbouring mip
             levels when ``mip_filter_mode`` is
-            :attr:`warp.TextureFilterMode.LINEAR`; the coordinates are evaluated independently at
+            :attr:`warp.TextureFilterMode.LINEAR`; the coordinate is evaluated independently at
             each level used in the blend. The ``lod`` argument is ignored for textures created with a single mip level.
 
     Returns:
@@ -10198,27 +10222,54 @@ def texture_sample(tex: Texture2D, u: float32 | float, v: float32 | float, dtype
     The filtering mode (:class:`warp.TextureFilterMode`) and the addressing of out-of-range
     coordinates (:class:`warp.TextureAddressMode`) are those set when the texture was created; see
     :class:`warp.Texture`. Currently, CUDA textures with unnormalized coordinates support only
-    ``CLAMP`` and ``BORDER`` address modes. Use normalized coordinates with ``WRAP`` or ``MIRROR``."""
+    ``CLAMP`` and ``BORDER`` address modes. Use normalized coordinates with ``WRAP`` or ``MIRROR``.
+
+    Example:
+
+        .. testcode::
+
+            @wp.kernel
+            def sample(t1: wp.Texture1D, t2: wp.Texture2D, t3: wp.Texture3D, out: wp.array[wp.float32]):
+                out[0] = wp.texture_sample(t1, 1.0, dtype=float)                    # halfway between texels 0 and 1
+                out[1] = wp.texture_sample(t2, wp.vec2(1.5, 0.5), dtype=float)      # texel (col 1, row 0)
+                out[2] = wp.texture_sample(t3, wp.vec3(1.5, 0.5, 0.5), dtype=float) # texel (col 1, row 0, slice 0)
+
+            data_1d = np.array([0.0, 10.0, 20.0, 30.0], dtype=np.float32)
+            tex_1d = wp.Texture1D(data_1d, filter_mode=wp.TextureFilterMode.LINEAR, normalized_coords=False)
+
+            data_2d = np.array([[0.0, 1.0], [2.0, 3.0]], dtype=np.float32)
+            tex_2d = wp.Texture2D(data_2d, filter_mode=wp.TextureFilterMode.CLOSEST, normalized_coords=False)
+
+            data_3d = np.arange(8, dtype=np.float32).reshape(2, 2, 2)
+            tex_3d = wp.Texture3D(data_3d, filter_mode=wp.TextureFilterMode.CLOSEST, normalized_coords=False)
+
+            out = wp.zeros(3, dtype=wp.float32)
+            wp.launch(sample, dim=1, inputs=[tex_1d, tex_2d, tex_3d], outputs=[out])
+            r = out.numpy()
+            print(round(float(r[0]), 1), round(float(r[1]), 1), round(float(r[2]), 1))
+
+        .. testoutput::
+
+            5.0 1.0 1.0"""
     ...
 
 @over
-def texture_sample(tex: Texture3D, uvw: vec3f, dtype: Any, lod: float32 | float=-1.0) -> Any:
-    """Sample the 3D texture at the given UVW coordinates.
+def texture_sample[D](tex: Texture3D, uvw: vec3f, dtype: type[D], lod: float32 | float=-1.0) -> D:
+    """Sample the 1D texture at the given U coordinate.
 
     .. admonition:: Experimental
 
         The texture API is experimental and subject to change. See :class:`warp.Texture`.
 
     Args:
-        tex: The 3D texture to sample.
-        uvw: UVW coordinates as a :class:`warp.vec3f`. With ``normalized_coords=True``, texel
-            ``(i, j, k)`` at a mip level of size ``(level_width, level_height, level_depth)`` is
-            centered at ``((i + 0.5) / level_width, (j + 0.5) / level_height, (k + 0.5) / level_depth)``.
-            With ``normalized_coords=False``, texel ``(i, j, k)`` of a single-level texture is
-            centered at ``(i + 0.5, j + 0.5, k + 0.5)``. Mipmapped textures should use normalized
-            coordinates. Unnormalized coordinates for mipmapped textures are currently accepted
-            only on the CPU backend and may be unsupported in a future release. Coordinates and
-            filtering footprints beyond the texture are handled by its per-axis address modes.
+        tex: The 1D texture to sample.
+        u: U coordinate. With ``normalized_coords=True``, texel ``i`` at a mip level of width
+            ``level_width`` is centered at ``(i + 0.5) / level_width``. With
+            ``normalized_coords=False``, texel ``i`` of a single-level texture is centered at
+            ``i + 0.5``. Mipmapped textures should use normalized coordinates. Unnormalized
+            coordinates for mipmapped textures are currently accepted only on the CPU backend and
+            may be unsupported in a future release. Coordinates and filtering footprints beyond the
+            texture are handled by its address mode.
         dtype: The return type, which selects how many channels are read: ``float`` (1 channel),
             :class:`warp.vec2f` (2), or :class:`warp.vec4f` (4). Use the type matching the texture's
             :attr:`~warp.Texture.num_channels`.
@@ -10226,7 +10277,7 @@ def texture_sample(tex: Texture3D, uvw: vec3f, dtype: Any, lod: float32 | float=
             negative value also selects mip level 0. Nonnegative values are clamped to the
             texture's available mip-level range. Fractional values blend between neighbouring mip
             levels when ``mip_filter_mode`` is
-            :attr:`warp.TextureFilterMode.LINEAR`; the coordinates are evaluated independently at
+            :attr:`warp.TextureFilterMode.LINEAR`; the coordinate is evaluated independently at
             each level used in the blend. The ``lod`` argument is ignored for textures created with a single mip level.
 
     Returns:
@@ -10239,32 +10290,54 @@ def texture_sample(tex: Texture3D, uvw: vec3f, dtype: Any, lod: float32 | float=
     The filtering mode (:class:`warp.TextureFilterMode`) and the addressing of out-of-range
     coordinates (:class:`warp.TextureAddressMode`) are those set when the texture was created; see
     :class:`warp.Texture`. Currently, CUDA textures with unnormalized coordinates support only
-    ``CLAMP`` and ``BORDER`` address modes. Use normalized coordinates with ``WRAP`` or ``MIRROR``."""
+    ``CLAMP`` and ``BORDER`` address modes. Use normalized coordinates with ``WRAP`` or ``MIRROR``.
+
+    Example:
+
+        .. testcode::
+
+            @wp.kernel
+            def sample(t1: wp.Texture1D, t2: wp.Texture2D, t3: wp.Texture3D, out: wp.array[wp.float32]):
+                out[0] = wp.texture_sample(t1, 1.0, dtype=float)                    # halfway between texels 0 and 1
+                out[1] = wp.texture_sample(t2, wp.vec2(1.5, 0.5), dtype=float)      # texel (col 1, row 0)
+                out[2] = wp.texture_sample(t3, wp.vec3(1.5, 0.5, 0.5), dtype=float) # texel (col 1, row 0, slice 0)
+
+            data_1d = np.array([0.0, 10.0, 20.0, 30.0], dtype=np.float32)
+            tex_1d = wp.Texture1D(data_1d, filter_mode=wp.TextureFilterMode.LINEAR, normalized_coords=False)
+
+            data_2d = np.array([[0.0, 1.0], [2.0, 3.0]], dtype=np.float32)
+            tex_2d = wp.Texture2D(data_2d, filter_mode=wp.TextureFilterMode.CLOSEST, normalized_coords=False)
+
+            data_3d = np.arange(8, dtype=np.float32).reshape(2, 2, 2)
+            tex_3d = wp.Texture3D(data_3d, filter_mode=wp.TextureFilterMode.CLOSEST, normalized_coords=False)
+
+            out = wp.zeros(3, dtype=wp.float32)
+            wp.launch(sample, dim=1, inputs=[tex_1d, tex_2d, tex_3d], outputs=[out])
+            r = out.numpy()
+            print(round(float(r[0]), 1), round(float(r[1]), 1), round(float(r[2]), 1))
+
+        .. testoutput::
+
+            5.0 1.0 1.0"""
     ...
 
 @over
-def texture_sample(tex: Texture3D, u: float32 | float, v: float32 | float, w: float32 | float, dtype: Any, lod: float32 | float=-1.0) -> Any:
-    """Sample the 3D texture at the given UVW coordinates.
+def texture_sample[D](tex: Texture3D, u: float32 | float, v: float32 | float, w: float32 | float, dtype: type[D], lod: float32 | float=-1.0) -> D:
+    """Sample the 1D texture at the given U coordinate.
 
     .. admonition:: Experimental
 
         The texture API is experimental and subject to change. See :class:`warp.Texture`.
 
     Args:
-        tex: The 3D texture to sample.
-        u: U coordinate. At a mip level of width ``level_width``, texel column ``i`` is centered at
-            ``(i + 0.5) / level_width`` when ``normalized_coords=True``. With unnormalized
-            coordinates, its center is ``i + 0.5`` in a single-level texture.
-        v: V coordinate. At a mip level of height ``level_height``, texel row ``j`` is centered at
-            ``(j + 0.5) / level_height`` when ``normalized_coords=True``. With unnormalized
-            coordinates, its center is ``j + 0.5`` in a single-level texture.
-        w: W coordinate. At a mip level of depth ``level_depth``, texel depth index ``k`` is centered
-            at ``(k + 0.5) / level_depth`` when ``normalized_coords=True``. With unnormalized
-            coordinates, its center is ``k + 0.5`` in a single-level texture. Mipmapped textures
-            should use normalized coordinates. Unnormalized coordinates for mipmapped textures are
-            currently accepted only on the CPU backend and may be unsupported in a future release.
-            Coordinates and filtering footprints beyond the texture are handled by its per-axis
-            address modes.
+        tex: The 1D texture to sample.
+        u: U coordinate. With ``normalized_coords=True``, texel ``i`` at a mip level of width
+            ``level_width`` is centered at ``(i + 0.5) / level_width``. With
+            ``normalized_coords=False``, texel ``i`` of a single-level texture is centered at
+            ``i + 0.5``. Mipmapped textures should use normalized coordinates. Unnormalized
+            coordinates for mipmapped textures are currently accepted only on the CPU backend and
+            may be unsupported in a future release. Coordinates and filtering footprints beyond the
+            texture are handled by its address mode.
         dtype: The return type, which selects how many channels are read: ``float`` (1 channel),
             :class:`warp.vec2f` (2), or :class:`warp.vec4f` (4). Use the type matching the texture's
             :attr:`~warp.Texture.num_channels`.
@@ -10272,7 +10345,7 @@ def texture_sample(tex: Texture3D, u: float32 | float, v: float32 | float, w: fl
             negative value also selects mip level 0. Nonnegative values are clamped to the
             texture's available mip-level range. Fractional values blend between neighbouring mip
             levels when ``mip_filter_mode`` is
-            :attr:`warp.TextureFilterMode.LINEAR`; the coordinates are evaluated independently at
+            :attr:`warp.TextureFilterMode.LINEAR`; the coordinate is evaluated independently at
             each level used in the blend. The ``lod`` argument is ignored for textures created with a single mip level.
 
     Returns:
@@ -10285,7 +10358,35 @@ def texture_sample(tex: Texture3D, u: float32 | float, v: float32 | float, w: fl
     The filtering mode (:class:`warp.TextureFilterMode`) and the addressing of out-of-range
     coordinates (:class:`warp.TextureAddressMode`) are those set when the texture was created; see
     :class:`warp.Texture`. Currently, CUDA textures with unnormalized coordinates support only
-    ``CLAMP`` and ``BORDER`` address modes. Use normalized coordinates with ``WRAP`` or ``MIRROR``."""
+    ``CLAMP`` and ``BORDER`` address modes. Use normalized coordinates with ``WRAP`` or ``MIRROR``.
+
+    Example:
+
+        .. testcode::
+
+            @wp.kernel
+            def sample(t1: wp.Texture1D, t2: wp.Texture2D, t3: wp.Texture3D, out: wp.array[wp.float32]):
+                out[0] = wp.texture_sample(t1, 1.0, dtype=float)                    # halfway between texels 0 and 1
+                out[1] = wp.texture_sample(t2, wp.vec2(1.5, 0.5), dtype=float)      # texel (col 1, row 0)
+                out[2] = wp.texture_sample(t3, wp.vec3(1.5, 0.5, 0.5), dtype=float) # texel (col 1, row 0, slice 0)
+
+            data_1d = np.array([0.0, 10.0, 20.0, 30.0], dtype=np.float32)
+            tex_1d = wp.Texture1D(data_1d, filter_mode=wp.TextureFilterMode.LINEAR, normalized_coords=False)
+
+            data_2d = np.array([[0.0, 1.0], [2.0, 3.0]], dtype=np.float32)
+            tex_2d = wp.Texture2D(data_2d, filter_mode=wp.TextureFilterMode.CLOSEST, normalized_coords=False)
+
+            data_3d = np.arange(8, dtype=np.float32).reshape(2, 2, 2)
+            tex_3d = wp.Texture3D(data_3d, filter_mode=wp.TextureFilterMode.CLOSEST, normalized_coords=False)
+
+            out = wp.zeros(3, dtype=wp.float32)
+            wp.launch(sample, dim=1, inputs=[tex_1d, tex_2d, tex_3d], outputs=[out])
+            r = out.numpy()
+            print(round(float(r[0]), 1), round(float(r[1]), 1), round(float(r[2]), 1))
+
+        .. testoutput::
+
+            5.0 1.0 1.0"""
     ...
 
 @over
@@ -12162,7 +12263,7 @@ def len(a: Vector[Scalar, Any] | Quaternion[Float] | Matrix[Scalar, Any, Any] | 
         of rows for matrices and tiles; or the size of the leading dimension for arrays."""
     ...
 
-def cast(a: Any, dtype: Any) -> Any:
+def cast[D](a: Any, dtype: type[D]) -> D:
     """Reinterpret a value as a different type while preserving its bit pattern.
 
     Args:

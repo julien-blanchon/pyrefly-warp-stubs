@@ -19,18 +19,18 @@ def zeros(shape: tuple[int, ...], dtype: Any = float) -> wp.array:
     return wp.zeros(shape, dtype=dtype, device=DEVICE)
 
 
-def run_tiled(kernel: Any, *arrays: wp.array, block_dim: int = 32) -> None:
-    wp.launch_tiled(kernel, dim=1, inputs=list(arrays), block_dim=block_dim, device=DEVICE)
+def run_tiled(kernel: Any, *inputs: Any, block_dim: int = 32) -> None:
+    wp.launch_tiled(kernel, dim=1, inputs=list(inputs), block_dim=block_dim, device=DEVICE)
 
 
-def assert_rejected(kernel: Any, *arrays: wp.array) -> None:
+def assert_rejected(kernel: Any, *inputs: Any) -> None:
     """The static rejection must match a real one: Warp refuses to build the kernel."""
     # Warp reports build failures as `ValueError` or `RuntimeError` (incl. `WarpCodegenError`).
     with pytest.raises((ValueError, RuntimeError), match="Error while parsing function"):
-        run_tiled(kernel, *arrays)
+        run_tiled(kernel, *inputs)
 
 
-def assert_build_fails(kernel: Any, *arrays: wp.array) -> None:
+def assert_build_fails(kernel: Any, *inputs: Any) -> None:
     """Like `assert_rejected`, for an ordinary (`wp.launch`) kernel."""
     with pytest.raises((ValueError, RuntimeError), match="Error while parsing function"):
-        wp.launch(kernel, dim=1, inputs=list(arrays), device=DEVICE)
+        wp.launch(kernel, dim=1, inputs=list(inputs), device=DEVICE)

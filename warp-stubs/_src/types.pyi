@@ -949,6 +949,9 @@ class MeshQuery:
     """
     _wp_native_name_ = 'mesh_query_aabb_t'
 
+    def __iter__(self) -> Iterator[int]:
+        ...
+
 class MeshQueryAABB(MeshQuery):
     """Object used to track state during a mesh AABB query.
 
@@ -3851,6 +3854,7 @@ class Bvh:
             self.runtime.core.wp_bvh_rebuild_device(self.id)
             self.runtime.verify_cuda_device(self.device)
             self._constructor = BvhConstructor.LBVH
+    id: uint64
 
 class Mesh:
     """Triangle mesh for collision detection, ray casting, and spatial queries."""
@@ -3968,7 +3972,7 @@ class Mesh:
             self.runtime.verify_cuda_device(self.device)
 
     @property
-    def points(self):
+    def points(self) -> array[vec3]:
         """The array of mesh's vertex positions of type :class:`warp.vec3`.
 
         The `Mesh.points` property has a custom setter method. Users can modify the vertex positions in-place,
@@ -3976,43 +3980,38 @@ class Mesh:
         to this property is also supported. The new array must have the same shape as the original, and once assigned,
         The :class:`Mesh` will automatically perform a refit operation based on the new vertex positions.
         """
-        return self._points
+        ...
 
     @points.setter
-    def points(self, points_new):
-        if points_new.device != self._points.device:
-            raise RuntimeError(f'The new points and the original points must live on the same device, the new points are on {points_new.device} while the old points are on {self._points.device}.')
-        if points_new.ndim != 1 or points_new.shape[0] != self._points.shape[0]:
-            raise RuntimeError(f"The new points and the original points must have the same shape, the new points' shape is {points_new.shape}, while the old points' shape is {self._points.shape}.")
-        self._points = points_new
-        if self.device.is_cpu:
-            self.runtime.core.wp_mesh_set_points_host(self.id, points_new.__ctype__())
-        else:
-            if not self.runtime.core.wp_mesh_set_points_device(self.id, points_new.__ctype__()):
-                raise RuntimeError(f'Failed to set mesh points: {self.runtime.get_error_string()}')
-            self.runtime.verify_cuda_device(self.device)
+    def points(self, points_new: array[vec3]) -> None:
+        """The array of mesh's vertex positions of type :class:`warp.vec3`.
+
+        The `Mesh.points` property has a custom setter method. Users can modify the vertex positions in-place,
+        but :meth:`refit` must be called manually after such modifications. Alternatively, assigning a new array
+        to this property is also supported. The new array must have the same shape as the original, and once assigned,
+        The :class:`Mesh` will automatically perform a refit operation based on the new vertex positions.
+        """
+        ...
 
     @property
-    def velocities(self):
+    def velocities(self) -> array[vec3]:
         """The array of mesh's velocities of type :class:`warp.vec3`.
 
         This is a property with a custom setter method. Users can modify the velocities in-place,
         or assign a new array to this property. No refitting is needed for changing velocities.
         """
-        return self._velocities
+        ...
 
     @velocities.setter
-    def velocities(self, velocities_new):
-        if velocities_new.device != self._velocities.device:
-            raise RuntimeError(f'The new points and the original points must live on the same device, the new points are on {velocities_new.device} while the old points are on {self._velocities.device}.')
-        if velocities_new.ndim != 1 or velocities_new.shape[0] != self._velocities.shape[0]:
-            raise RuntimeError(f"The new points and the original points must have the same shape, the new points' shape is {velocities_new.shape}, while the old points' shape is {self._velocities.shape}.")
-        self._velocities = velocities_new
-        if self.device.is_cpu:
-            self.runtime.core.wp_mesh_set_velocities_host(self.id, velocities_new.__ctype__())
-        else:
-            self.runtime.core.wp_mesh_set_velocities_device(self.id, velocities_new.__ctype__())
-            self.runtime.verify_cuda_device(self.device)
+    def velocities(self, velocities_new: array[vec3]) -> None:
+        """The array of mesh's velocities of type :class:`warp.vec3`.
+
+        This is a property with a custom setter method. Users can modify the velocities in-place,
+        or assign a new array to this property. No refitting is needed for changing velocities.
+        """
+        ...
+    indices: array[int32]
+    id: uint64
 _VOLUME_VALIDATION_SUCCESS = 1
 _VOLUME_VALIDATION_UNSUPPORTED_LAYOUT = 2
 
@@ -4898,6 +4897,7 @@ class Volume:
         else:
             self.runtime.core.wp_volume_rebuild_from_active_voxels_host(self.id, ctypes.c_void_p(voxel_points.ptr), voxel_points.shape[0], point_mask_ptr, transform_buf, translation_buf, in_world_space, status_ptr)
         return status
+    id: uint64
 
 def _is_contiguous_vec_like_array(array, vec_length: int, scalar_types: tuple[type]) -> builtins.bool:
     if not (is_array(array) and array.is_contiguous):
@@ -4957,6 +4957,11 @@ class MeshQueryPoint:
     from warp._src.codegen import Var as _Var
     _wp_native_name_ = 'mesh_query_point_t'
     vars: ClassVar[dict[str, _Var]] = {'result': _Var('result', bool), 'sign': _Var('sign', float32), 'face': _Var('face', int32), 'u': _Var('u', float32), 'v': _Var('v', float32)}
+    result: bool
+    sign: float32
+    face: int32
+    u: float32
+    v: float32
 
 class MeshQueryRay:
     """Output for the mesh query ray functions.
@@ -4976,6 +4981,13 @@ class MeshQueryRay:
     from warp._src.codegen import Var as _Var
     _wp_native_name_ = 'mesh_query_ray_t'
     vars: ClassVar[dict[str, _Var]] = {'result': _Var('result', bool), 'sign': _Var('sign', float32), 'face': _Var('face', int32), 't': _Var('t', float32), 'u': _Var('u', float32), 'v': _Var('v', float32), 'normal': _Var('normal', vec3)}
+    result: bool
+    sign: float32
+    face: int32
+    t: float32
+    u: float32
+    v: float32
+    normal: vec3
 
 class HashGrid:
     """Hash-based spatial grid for accelerated neighbor queries on point data.
@@ -5151,6 +5163,7 @@ class HashGrid:
                     self._native_func('destroy')(self.id, self._type_id)
         except (TypeError, AttributeError):
             pass
+    id: uint64
 generic_types = (Any, Scalar, Float, Int)
 
 def type_is_generic(t):

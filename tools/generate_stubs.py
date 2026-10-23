@@ -37,6 +37,9 @@ Merge rules, applied to the statements of the upstream module:
 In every module except ``__init__.pyi``, Warp's ``@wp.func`` overloading by
 redefinition (several ``def f`` with different parameter types) becomes a
 ``typing.overload`` group; otherwise the last definition would shadow the rest.
+Fields that a class declares only in Warp's code-generation registry
+(``vars = {"face": _Var("face", int32), ...}``, e.g. ``MeshQueryPoint``) become
+class annotations (``face: int32``), so kernels can read them.
 
 An override function or class without a docstring inherits the docstring of
 the upstream definition it replaces, so editor hovers keep Warp's docs.
@@ -415,6 +418,48 @@ def group_wp_func_overloads(upstream: list[ast.stmt]) -> list[ast.stmt]:
     return result[:first_non_import] + [marker] + result[first_non_import:]
 
 
+def _var_annotation(expr: ast.expr) -> ast.expr:
+    """`array(dtype=vec3)` (Warp's annotation call form) -> `array[vec3]`."""
+    if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name) and expr.func.id == "array" and not expr.args:
+        dtype = next((k.value for k in expr.keywords if k.arg == "dtype"), None)
+        if dtype is not None and all(k.arg in ("dtype",) for k in expr.keywords):
+            return ast.Subscript(value=ast.Name(id="array", ctx=ast.Load()), slice=dtype, ctx=ast.Load())
+    return expr
+
+
+def annotate_var_registries(upstream: list[ast.stmt]) -> None:
+    """Declare the fields of `vars: ClassVar[dict[str, _Var]] = {...}` registries."""
+    for cls in upstream:
+        if not isinstance(cls, ast.ClassDef):
+            continue
+        registry = next(
+            (
+                s.value
+                for s in cls.body
+                if isinstance(s, ast.AnnAssign)
+                and isinstance(s.target, ast.Name)
+                and s.target.id == "vars"
+                and isinstance(s.value, ast.Dict)
+            ),
+            None,
+        )
+        if registry is None:
+            continue
+        bound = set().union(*(bindings(s) for s in cls.body))
+        for key, value in zip(registry.keys, registry.values):
+            if not (isinstance(key, ast.Constant) and isinstance(key.value, str)):
+                continue
+            if not (isinstance(value, ast.Call) and len(value.args) == 2) or key.value in bound:
+                continue
+            cls.body.append(
+                ast.AnnAssign(
+                    target=ast.Name(id=key.value, ctx=ast.Store()),
+                    annotation=_var_annotation(value.args[1]),
+                    simple=1,
+                )
+            )
+
+
 def generate_module(
     upstream_src: str,
     override_src: str,
@@ -433,6 +478,7 @@ def generate_module(
         rewrite_params(upstream, config.rewrite_params, where=where)
     if group_overloads:
         upstream = group_wp_func_overloads(upstream)
+        annotate_var_registries(upstream)
     merged = merge_body(
         upstream, override, replace_classes=config.replace, where=where, resolve_doc=resolve_doc
     )

@@ -70,6 +70,7 @@ Search for the function there. If its signature mentions `Tile[D, [M, N]]`,
 | `tile_matmul`, `tile_cholesky`, `*_solve`, `*_solve_inplace` | Floating-point tiles only (`wp.int32` tiles are an error; a Python `int` dtype slips through because typing treats `int` as a `float`). |
 | `tile_dot`, `tile_diag_add` | Matching / square extents checked. |
 | Scalars | `float` **is** `wp.float32`, `int` is `wp.int32`, `bool` is `wp.bool` (Warp canonicalises them), so `a[i]` on a `wp.array[wp.float32]` is `float`. No implicit conversions, as in Warp: `wp.max(a[i], 0.0)` is fine; `wp.max(f64, 0.0)`, `f32 + f64` are errors. `wp.where(c, x, y)` keeps the value type. |
+| Textures, meshes, volumes | `wp.texture_sample(..., dtype=D)`, `volume_sample`, `volume_lookup`, `cast` return `D`; `mesh_query_point`/`mesh_query_ray` fields (`result`, `face`, `u`, `v`, `t`, `normal`) are typed; `for face in wp.mesh_query_aabb(...)` iterates, BVH queries do not (use `wp.bvh_query_next`); host-side `.id` is `uint64`. |
 | Vectors, matrices, quaternions, transforms | `wp.vec3` = `wp.vec3f` = `Vector[float, Literal[3]]`. `v + v`, `v * s`, `s * v`, `v / s`, `m * v` / `m @ v` (`[R, C] × [C] → [R]`), `v * m`, `m @ m`, `q * q`, `t * t`, `v.x`, `v[0]`, `m[i]` (row), `t.p`, `t.q` are typed. `v * v`, `v + 1.0`, `v * f64`, `mat44 * vec3`, `q * v`, `-t` are errors, as in Warp. `wp.dot`/`wp.length` give the scalar; `wp.normalize` & co. give `Vector[float, Any]`. |
 
 ## Warp rules annotations must respect

@@ -490,3 +490,33 @@ class Tile[DType, Shape: IntTuple = IntTuple]:
 class HashGridQuery:
     # Kernel scope: `for index in wp.hash_grid_query(grid, point, radius)`.
     def __iter__(self) -> Iterator[int]: ...
+
+# Kernels receive these objects by their `id`. Upstream assigns it from untyped
+# native calls; it is typed `uint64`, the type every kernel parameter, builtin
+# and `@wp.struct` field uses for it (a Python int at runtime, which Warp accepts
+# wherever a `uint64` is expected).
+class Mesh:
+    id: uint64
+    # Untyped properties upstream; Warp's registry declares `array(dtype=vec3)`.
+    @property
+    def points(self) -> array[vec3]: ...
+    @points.setter
+    def points(self, points_new: array[vec3]) -> None: ...
+    @property
+    def velocities(self) -> array[vec3]: ...
+    @velocities.setter
+    def velocities(self, velocities_new: array[vec3]) -> None: ...
+
+class Bvh:
+    id: uint64
+
+class HashGrid:
+    id: uint64
+
+class Volume:
+    id: uint64
+
+class MeshQuery:
+    # Kernel scope: `for face in wp.mesh_query_aabb(mesh, low, high)`. (BVH
+    # queries are not iterable in Warp: loop with `wp.bvh_query_next`.)
+    def __iter__(self) -> Iterator[int]: ...
