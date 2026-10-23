@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pyrefly-warp-stubs"
+description = "NVIDIA Warp type stubs with array and tile shape tracking for Pyrefly"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+version = "0.1.0"
+keywords = ["typechecker", "typechecking", "stubs", "warp", "pyrefly", "shapes"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+  "Typing :: Stubs Only",
+]
+dependencies = [
+  "pyrefly-shape-extensions>=1.4.0",
+  # Generated from warp-lang 1.18. Newer releases work, but APIs added after
+  # 1.18 are missing from the stubs until they are regenerated.
+  "warp-lang>=1.18",
+]
+
+[dependency-groups]
+dev = ["pyrefly==1.4.0", "numpy", "pytest"]
+
+[tool.hatch.build.targets.wheel]
+only-include = ["warp-stubs"]
+
+[tool.hatch.build.targets.sdist]
+include = ["warp-stubs/", "README.md"]
+
+# The stubs and overrides use Pyrefly's shape DSL, which other checkers reject.
+[tool.ty.src]
+exclude = ["warp-stubs", "overrides", "context", "tests", "examples", "scratch"]

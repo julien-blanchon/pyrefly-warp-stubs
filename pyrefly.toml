@@ -1,0 +1,5 @@
+# Type checks the tests and examples against the local `warp-stubs`.
+project-includes = ["tests", "examples"]
+search-path = [".", "tests"]
+python-interpreter-path = ".venv/bin/python"
+project-excludes = ["tests/lint_fixtures/**"]
