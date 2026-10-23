@@ -23,6 +23,10 @@ dependencies = [
   "warp-lang>=1.18",
 ]
 
+[project.urls]
+Repository = "https://github.com/julien-blanchon/pyrefly-warp-subs"
+Documentation = "https://github.com/julien-blanchon/pyrefly-warp-subs#readme"
+
 [dependency-groups]
 dev = ["pyrefly==1.4.0", "numpy", "pytest"]
 
@@ -30,7 +34,7 @@ dev = ["pyrefly==1.4.0", "numpy", "pytest"]
 only-include = ["warp-stubs"]
 
 [tool.hatch.build.targets.sdist]
-include = ["warp-stubs/", "README.md"]
+include = ["warp-stubs/", "README.md", "LICENSE"]
 
 # The stubs and overrides use Pyrefly's shape DSL, which other checkers reject.
 [tool.ty.src]

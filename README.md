@@ -125,6 +125,14 @@ matmul(wp.empty((64, 32)), wp.empty((32, 48)))   # array[float, [64, 48]]
 matmul(wp.empty((32, 48)), wp.empty((64, 32)))   # error: expected [48, @_]
 ```
 
+Inside the kernel, `a`, `b` and `c` are only `array[float, [int, int]]`: a
+kernel cannot state that two parameters share a shape (a generic kernel
+signature fails when Warp evaluates it), and `inputs=[...]` is not checked
+against the kernel. Allocating outputs from the inputs in the launcher
+(`wp.zeros((a.shape[0], b.shape[1]))`, `wp.empty_like(x)`) enforces the
+relationship by construction and leaves that one line as the only unchecked
+link.
+
 ### Named dimensions (`B C H W`)
 
 Named dimensions are type parameters. Three spellings check the same way:
