@@ -1196,8 +1196,23 @@ def static[T](expr: T) -> T: ...
 # function, so `k.module`, `k.key` and `wp.Kernel` parameters fail.
 # ===========================================================================
 
+# `wp.kernel(fn, module=...)`: a function and options build the kernel directly.
 @over
-def kernel(f: Callable[..., Any], /) -> Kernel: ...
+def kernel(
+    f: Callable[..., Any],
+    /,
+    *,
+    name: str | None = None,
+    enable_backward: _builtins.bool | None = None,
+    launch_bounds: tuple[_builtins.int, ...] | _builtins.int | None = None,
+    cuda_max_registers: _builtins.int | None = None,
+    enable_cuda_smem_spilling: _builtins.bool | None = None,
+    cluster_dim: _builtins.int | None = None,
+    module: Module | Literal["unique"] | str | None = None,
+    module_options: dict[str, Any] | None = None,
+    entry_point_abi: Literal["warp", "external_constant_params"] | None = None,
+    grid_stride: _builtins.bool | None = None,
+) -> Kernel: ...
 @over
 def kernel(
     f: None = None,

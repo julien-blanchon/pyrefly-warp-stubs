@@ -39,6 +39,27 @@ def check_constructor(data: np.ndarray, ptr: int) -> None:
     # Without `dtype`, Warp infers it from the data: not tracked.
     assert_type(wp.array([1, 2, 3]), wp.array[Any, [3]])
     assert_type(wp.array(ptr=ptr, dtype=float, shape=(4,), capacity=16), wp.array[float, [4]])
+    assert_type(wp.array(np.zeros(4), dtype=float).device, wp.Device)  # never `None` once built
+
+
+def check_vector_dtype(points: np.ndarray[tuple[int, int], np.dtype[np.float32]]) -> None:
+    # Warp reads the innermost dimension of numbers as the vector.
+    assert_type(wp.array(points, dtype=wp.vec3), wp.array[wp.vec3, [int]])
+    assert_type(wp.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=wp.vec3), wp.array[wp.vec3, [2]])
+    assert_type(wp.array([[[0, 1, 2]]], dtype=wp.vec3i), wp.array[wp.vec3i, [1, 1]])
+    # A list of vectors is one vector per element.
+    assert_type(wp.array([wp.vec3(), wp.vec3(), wp.vec3()], dtype=wp.vec3), wp.array[wp.vec3, [3]])
+
+
+@wp.func
+def view_at(ptr: wp.uint64, n: int) -> wp.array[float]:
+    return wp.array(ptr=ptr, shape=(n,), dtype=float)  # a view of device memory from an address
+
+
+@wp.kernel(module="unique")
+def view_kernel(ptr: wp.uint64, n: int, out: wp.array1d[float]):
+    i = wp.tid()
+    out[i] = view_at(ptr, n)[i] * 2.0
 
 
 def check_dtype_identity(
@@ -102,6 +123,16 @@ def test_creation() -> None:
     assert_shape(wp.full((2, 2), 1.5, dtype=float, device="cpu").shape, (2, 2))
     assert_shape(wp.array(shape=(2, 3), dtype=float, device="cpu").shape, (2, 3))
     assert_shape(wp.array([[1.0, 2.0], [3.0, 4.0]], dtype=float, device="cpu").shape, (2, 2))
+    assert_shape(wp.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=wp.vec3, device="cpu").shape, (2,))
+    assert wp.array(np.zeros((5, 3), dtype=np.float32), dtype=wp.vec3, device="cpu").shape == (5,)
+
+
+def test_view_from_address() -> None:
+    a = wp.array(np.arange(4, dtype=np.float32), dtype=float, device="cpu")
+    out = wp.zeros(4, dtype=float, device="cpu")
+    assert a.ptr is not None  # `None` for an empty array
+    wp.launch(view_kernel, dim=4, inputs=[wp.uint64(a.ptr), 4, out], device="cpu")
+    np.testing.assert_allclose(out.numpy(), [0.0, 2.0, 4.0, 6.0])
 
 
 def test_views() -> None:

@@ -65,3 +65,60 @@ def test_no_implicit_conversion() -> None:
     d = wp.zeros(1, dtype=wp.float64, device=DEVICE)
     assert_build_fails(max_f64_literal_kernel, d, wp.zeros(1, dtype=wp.float64, device=DEVICE))
     assert_build_fails(add_f32_f64_kernel, wp.zeros(1, dtype=wp.float32, device=DEVICE), d, wp.zeros(1, device=DEVICE))
+
+
+def check_integer_operators(a: wp.array1d[wp.uint32], b: wp.array1d[wp.int64], i: int) -> None:
+    s = wp.uint32(2)
+    assert_type(a[i] >> s, wp.uint32)
+    assert_type(a[i] << s, wp.uint32)
+    assert_type((a[i] & s) | (a[i] ^ s), wp.uint32)
+    assert_type(~a[i], wp.uint32)
+    assert_type(b[i] // wp.int64(3), wp.int64)
+
+
+def check_scalar_conversions(c: wp.array1d[wp.uint8], h: wp.array1d[wp.float16], i: int) -> None:
+    assert_type(wp.uint32(c[i]), wp.uint32)  # any Warp scalar converts
+    assert_type(wp.int64(h[i]), wp.int64)
+    assert_type(wp.uint64(np.uint64(3)), wp.uint64)  # and NumPy scalars on the host
+    assert_type(wp.float16(np.float32(1.5)), wp.float16)
+
+
+@wp.kernel(module="unique")
+def integer_operators_kernel(
+    a: wp.array1d[wp.uint32],
+    b: wp.array1d[wp.int64],
+    c: wp.array1d[wp.uint8],
+    out: wp.array1d[wp.uint32],
+    out64: wp.array1d[wp.int64],
+):
+    i = wp.tid()
+    x = a[i]
+    s = wp.uint32(2)
+    out[i] = ((x >> s) | (x << s)) & ~(x ^ wp.uint32(c[i])) // s
+    out64[i] = b[i] // wp.int64(3)
+
+
+@wp.kernel(module="unique")
+def shift_by_int_kernel(a: wp.array1d[wp.uint32], out: wp.array1d[wp.uint32]):
+    i = wp.tid()
+    out[i] = a[i] >> 1  # E: `>>` is not supported between `uint32` and `Literal[1]`
+
+
+def test_integer_operators() -> None:
+    a = np.array([7, 1024], dtype=np.uint32)
+    b = np.array([10, -7], dtype=np.int64)
+    c = np.array([3, 5], dtype=np.uint8)
+    out = wp.zeros(2, dtype=wp.uint32, device=DEVICE)
+    out64 = wp.zeros(2, dtype=wp.int64, device=DEVICE)
+    inputs = [wp.array(a, dtype=wp.uint32, device=DEVICE), wp.array(b, dtype=wp.int64, device=DEVICE)]
+    inputs += [wp.array(c, dtype=wp.uint8, device=DEVICE), out, out64]
+    wp.launch(integer_operators_kernel, dim=2, inputs=inputs, device=DEVICE)
+    s = np.uint32(2)
+    np.testing.assert_array_equal(out.numpy(), ((a >> s) | (a << s)) & ~(a ^ c.astype(np.uint32)) // s)
+    np.testing.assert_array_equal(out64.numpy(), [3, -3])  # Warp truncates towards zero, like C
+    assert_build_fails(shift_by_int_kernel, inputs[0], out)
+
+
+def test_scalar_conversions() -> None:
+    assert int(wp.uint64(np.uint64(3))) == 3
+    assert float(wp.float16(np.float32(1.5))) == 1.5

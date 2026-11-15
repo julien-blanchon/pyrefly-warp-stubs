@@ -9,7 +9,7 @@
 
 import builtins
 from collections.abc import Iterator, Sequence
-from typing import Any, Literal, Protocol, Self, TypeAlias, TypeVar, overload
+from typing import Any, Literal, Protocol, Self, SupportsFloat, SupportsIndex, TypeAlias, TypeVar, overload
 
 from shape_extensions import (
     Flag,
@@ -34,6 +34,9 @@ __generator__ = {
         "array | list[array] | None": "array | Sequence[array | None] | None",
     },
 }
+
+# `wp.ref[T]`: a `@wp.func` parameter passed by reference is used as a `T`.
+type ref[T] = T
 
 @overload
 def constant[N: IntVar](x: _Int[N]) -> _Int[N]: ...
@@ -85,7 +88,7 @@ class array[DType, Shape: IntTuple = IntTuple](Array[DType, Shape]):
         dtype: type[D],
         shape: IntTupleOrList[S],
         strides: tuple[builtins.int, ...] | None = None,
-        ptr: builtins.int | None = None,
+        ptr: builtins.int | uint64 | None = None,
         capacity: builtins.int | None = None,
         device: warp.DeviceLike = None,
         pinned: builtins.bool = False,
@@ -104,7 +107,7 @@ class array[DType, Shape: IntTuple = IntTuple](Array[DType, Shape]):
         *,
         shape: IntTupleOrList[S],
         strides: tuple[builtins.int, ...] | None = None,
-        ptr: builtins.int | None = None,
+        ptr: builtins.int | uint64 | None = None,
         capacity: builtins.int | None = None,
         device: warp.DeviceLike = None,
         pinned: builtins.bool = False,
@@ -123,7 +126,7 @@ class array[DType, Shape: IntTuple = IntTuple](Array[DType, Shape]):
         dtype: type[D],
         shape: _Int[N],
         strides: tuple[builtins.int, ...] | None = None,
-        ptr: builtins.int | None = None,
+        ptr: builtins.int | uint64 | None = None,
         capacity: builtins.int | None = None,
         device: warp.DeviceLike = None,
         pinned: builtins.bool = False,
@@ -142,7 +145,45 @@ class array[DType, Shape: IntTuple = IntTuple](Array[DType, Shape]):
         *,
         shape: _Int[N],
         strides: tuple[builtins.int, ...] | None = None,
-        ptr: builtins.int | None = None,
+        ptr: builtins.int | uint64 | None = None,
+        capacity: builtins.int | None = None,
+        device: warp.DeviceLike = None,
+        pinned: builtins.bool = False,
+        copy: builtins.bool = True,
+        deleter: Callable[[builtins.int, builtins.int], None] | None = None,
+        ndim: builtins.int | None = None,
+        grad: array | None = None,
+        requires_grad: builtins.bool = False,
+        retain_grad: builtins.bool = False,
+    ) -> None: ...
+    # Numbers for a vector dtype: Warp reads the innermost dimension as the vector
+    # (`wp.array(np.zeros((N, 3)), dtype=wp.vec3)` has shape `(N,)`).
+    @overload
+    def __init__[T, L, S: IntTuple](
+        self: array[Vector[T, L], S],
+        data: RegularNestedList[[*S, L], builtins.int | builtins.float],
+        dtype: type[Vector[T, L]],
+        shape: None = None,
+        strides: tuple[builtins.int, ...] | None = None,
+        ptr: None = None,
+        capacity: builtins.int | None = None,
+        device: warp.DeviceLike = None,
+        pinned: builtins.bool = False,
+        copy: builtins.bool = True,
+        deleter: Callable[[builtins.int, builtins.int], None] | None = None,
+        ndim: builtins.int | None = None,
+        grad: array | None = None,
+        requires_grad: builtins.bool = False,
+        retain_grad: builtins.bool = False,
+    ) -> None: ...
+    @overload
+    def __init__[T, L, S: IntTuple](
+        self: array[Vector[T, L], S],
+        data: _HasShape[[*S, L]],
+        dtype: type[Vector[T, L]],
+        shape: None = None,
+        strides: tuple[builtins.int, ...] | None = None,
+        ptr: None = None,
         capacity: builtins.int | None = None,
         device: warp.DeviceLike = None,
         pinned: builtins.bool = False,
@@ -234,7 +275,7 @@ class array[DType, Shape: IntTuple = IntTuple](Array[DType, Shape]):
         dtype: Any = Any,
         shape: builtins.int | tuple[builtins.int, ...] | list[builtins.int] | None = None,
         strides: tuple[builtins.int, ...] | None = None,
-        ptr: builtins.int | None = None,
+        ptr: builtins.int | uint64 | None = None,
         capacity: builtins.int | None = None,
         device: warp.DeviceLike = None,
         pinned: builtins.bool = False,
@@ -266,6 +307,9 @@ class array[DType, Shape: IntTuple = IntTuple](Array[DType, Shape]):
     @overload
     def __getitem__(self, key: Any) -> Any: ...
     def __setitem__(self, key: Any, value: Any) -> None: ...
+    # Upstream's body assigns `None` before the device is known; a constructed
+    # array always has one.
+    device: warp.Device
     @property
     def grad(self) -> array[DType, Shape]: ...
     @grad.setter
@@ -404,6 +448,9 @@ int32: TypeAlias = builtins.int
 bool: TypeAlias = builtins.bool
 
 class scalar_base:
+    # Warp converts any number: Python and NumPy scalars, other Warp scalars
+    # (`wp.uint32(x_uint8)` in kernels, `wp.uint64(np.uint64(...))` on the host).
+    def __init__(self, x: SupportsFloat | SupportsIndex = 0) -> None: ...
     def __add__(self, y: Self, /) -> Self: ...
     def __radd__(self, y: Self, /) -> Self: ...
     def __sub__(self, y: Self, /) -> Self: ...
@@ -432,6 +479,14 @@ class int_base(scalar_base):
     def __le__(self, x: Self, /) -> builtins.bool: ...
     def __lt__(self, x: Self, /) -> builtins.bool: ...
     def __abs__(self) -> Self: ...
+    # Integer-only operators, between values of one type (kernel scope).
+    def __floordiv__(self, y: Self, /) -> Self: ...
+    def __lshift__(self, y: Self, /) -> Self: ...
+    def __rshift__(self, y: Self, /) -> Self: ...
+    def __and__(self, y: Self, /) -> Self: ...
+    def __or__(self, y: Self, /) -> Self: ...
+    def __xor__(self, y: Self, /) -> Self: ...
+    def __invert__(self) -> Self: ...
 
 # ---------------------------------------------------------------------------
 # Tiles (kernel scope). Element-wise operators require identical shapes; Warp

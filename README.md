@@ -279,6 +279,13 @@ the overrides also fix these:
   `wp.from_torch`/`from_dlpack` return arrays; `wp.utils.array_sum` returns a
   NumPy scalar (or array, for vector dtypes); `Tape.gradients`, `Volume`
   voxel queries and `wp.Volume.allocate(min=(...), ...)` are typed.
+- Scalars and arrays: Warp integer scalars have their integer operators
+  (`>>`, `<<`, `&`, `|`, `^`, `~`, `//`, between values of one type, as in Warp);
+  scalar constructors take any number (`wp.uint32(x_uint8)`, `wp.uint64(np.uint64(1))`);
+  `wp.ref[T]` parameters are used as a `T`; `wp.kernel(fn, module=...)` is a `Kernel`;
+  `wp.array(np.zeros((N, 3)), dtype=wp.vec3)` is `array[vec3, [N]]` (the innermost
+  dimension is the vector), also for nested lists of numbers; `wp.array(ptr=..., ...)`
+  takes a `uint64` address in kernels; `array.device` is a `Device`, not `Device | None`.
 - Kernel values: atomics (`wp.atomic_add` & co) return the previous element
   and require a value of the array's dtype (a `float64` array with `1.0` is an
   error, as in Warp); `wp.static(x)` keeps `x`'s type; `wp.HashGridQuery[wp.float64]`
@@ -363,6 +370,15 @@ pins the lint.
 To target another Warp release: install it, regenerate, and run the tests.
 Overrides of functions whose upstream signature changed will show up as test
 failures or new errors in `compare_examples.py`.
+
+## Changelog
+
+- **0.1.2**: host objects (`@wp.kernel` is a `Kernel`, `Launch`, graph capture, `BsrMatrix`,
+  `Tape`, ...) and object-like kernel values (atomics, `wp.static`); integer operators on Warp
+  integer scalars; scalar conversions from any number; `wp.ref[T]`; `wp.kernel(fn, **options)`;
+  vector-dtype arrays built from numbers; `wp.array(ptr=uint64, ...)` in kernels;
+  `array.device` without `None`.
+- **0.1.1**: textures, mesh / volume queries, object ids.
 
 ## License
 

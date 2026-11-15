@@ -29,8 +29,32 @@ def squared(x: float) -> float:
     return x * x
 
 
+def _scale(a: wp.array1d[float], s: float):
+    i = wp.tid()
+    a[i] = a[i] * s
+
+
+@wp.struct
+class Counter:
+    n: int
+
+
+@wp.func
+def bump(c: wp.ref[Counter], by: int):
+    c.n += by  # a reference parameter is used as the referenced type
+
+
+@wp.kernel(module="unique", enable_backward=False)  # Warp requires it for `wp.ref` calls
+def bump_kernel(out: wp.array1d[int]):
+    c = Counter()
+    c.n = 1
+    bump(c, 2)
+    out[0] = c.n
+
+
 def check_kernels_and_launches(a: wp.array1d[float]) -> None:
     assert_type(scale_kernel, wp.Kernel)
+    assert_type(wp.kernel(_scale, module="unique", enable_backward=False), wp.Kernel)
     assert_type(squared.key, str)
     assert_type(squared(2.0), float)  # still callable with its signature in kernels
     assert_type(wp.launch(scale_kernel, dim=4, inputs=[a, 2.0]), None)
@@ -90,6 +114,16 @@ def atomics_kernel(a: wp.array1d[float], v: wp.array2d[wp.vec3], old: wp.array1d
 @wp.kernel(module="unique")
 def bad_atomic_kernel(d: wp.array1d[wp.float64]):
     wp.atomic_add(d, 0, 1.0)  # E: No matching overload found for function `warp.atomic_add`
+
+
+def test_kernel_with_options_and_references() -> None:
+    a = wp.array(np.ones(2, dtype=np.float32), dtype=float, device=DEVICE)
+    k = wp.kernel(_scale, module="unique", enable_backward=False)
+    wp.launch(k, dim=2, inputs=[a, 2.0], device=DEVICE)
+    np.testing.assert_allclose(a.numpy(), [2.0, 2.0])
+    out = wp.zeros(1, dtype=int, device=DEVICE)
+    wp.launch(bump_kernel, dim=1, inputs=[out], device=DEVICE)
+    assert out.numpy()[0] == 3
 
 
 def test_kernel_objects_and_capture() -> None:

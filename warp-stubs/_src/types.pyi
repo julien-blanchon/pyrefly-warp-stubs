@@ -18,7 +18,7 @@ import types
 import zlib
 from collections.abc import Iterator, Sequence
 from collections.abc import Callable, Mapping
-from typing import Any, Literal, Protocol, Self, TypeAlias, TypeVar, overload
+from typing import Any, Literal, Protocol, Self, SupportsFloat, SupportsIndex, TypeAlias, TypeVar, overload
 from typing import TYPE_CHECKING, ClassVar, Generic, NamedTuple, Union, get_args, get_origin
 import numpy as np
 import warp
@@ -42,8 +42,8 @@ else:
 
 class scalar_base:
 
-    def __init__(self, x: int | float=0):
-        self.value = x
+    def __init__(self, x: SupportsFloat | SupportsIndex=0) -> None:
+        ...
 
     def __bool__(self) -> builtins.bool:
         return self.value != 0
@@ -182,6 +182,27 @@ class int_base(scalar_base):
 
     def __hash__(self):
         return hash(int(self))
+
+    def __floordiv__(self, y: Self, /) -> Self:
+        ...
+
+    def __lshift__(self, y: Self, /) -> Self:
+        ...
+
+    def __rshift__(self, y: Self, /) -> Self:
+        ...
+
+    def __and__(self, y: Self, /) -> Self:
+        ...
+
+    def __or__(self, y: Self, /) -> Self:
+        ...
+
+    def __xor__(self, y: Self, /) -> Self:
+        ...
+
+    def __invert__(self) -> Self:
+        ...
 bool: TypeAlias = builtins.bool
 
 class float16(float_base):
@@ -1680,25 +1701,7 @@ class Reference:
 
     def __hash__(self):
         return hash((Reference, self.value_type))
-
-class ref:
-    """Pass-by-reference parameter annotation: ``wp.ref[T]``.
-
-    Annotate a ``@wp.func`` or ``@wp.func_native`` parameter as ``wp.ref[T]``
-    to receive an addressable argument by reference. Mutations to the parameter
-    are visible in the caller's storage without a return value.
-
-    Accepted argument expressions at call sites include local variables,
-    reference parameters, array elements, struct fields, and
-    vector/matrix/quaternion/transform components. Literals, arithmetic
-    temporaries, and function-call results are rejected at compile time.
-
-    ``wp.ref[T]`` is not allowed in ``@wp.kernel`` signatures; pass addressable
-    values into helper functions instead.
-    """
-
-    def __class_getitem__(cls, dtype):
-        return Reference(dtype)
+type ref[T] = T
 
 def is_reference(t) -> builtins.bool:
     """Return ``True`` if *t* is a ``Reference`` instance."""
@@ -1788,7 +1791,7 @@ class array[DType, Shape: IntTuple = IntTuple](Array[DType, Shape]):
         return instance
 
     @overload
-    def __init__[D, S: IntTuple](self: array[D, S], data: None=None, *, dtype: type[D], shape: IntTupleOrList[S], strides: tuple[builtins.int, ...] | None=None, ptr: builtins.int | None=None, capacity: builtins.int | None=None, device: warp.DeviceLike=None, pinned: builtins.bool=False, copy: builtins.bool=True, deleter: Callable[[builtins.int, builtins.int], None] | None=None, ndim: builtins.int | None=None, grad: array | None=None, requires_grad: builtins.bool=False, retain_grad: builtins.bool=False) -> None:
+    def __init__[D, S: IntTuple](self: array[D, S], data: None=None, *, dtype: type[D], shape: IntTupleOrList[S], strides: tuple[builtins.int, ...] | None=None, ptr: builtins.int | uint64 | None=None, capacity: builtins.int | None=None, device: warp.DeviceLike=None, pinned: builtins.bool=False, copy: builtins.bool=True, deleter: Callable[[builtins.int, builtins.int], None] | None=None, ndim: builtins.int | None=None, grad: array | None=None, requires_grad: builtins.bool=False, retain_grad: builtins.bool=False) -> None:
         """Construct a new Warp array object.
 
         When the ``data`` argument is a valid list, tuple, or ndarray the array will be constructed from this object's data.
@@ -1832,7 +1835,7 @@ class array[DType, Shape: IntTuple = IntTuple](Array[DType, Shape]):
         ...
 
     @overload
-    def __init__[S: IntTuple](self: array[Any, S], data: None=None, dtype: Any=Any, *, shape: IntTupleOrList[S], strides: tuple[builtins.int, ...] | None=None, ptr: builtins.int | None=None, capacity: builtins.int | None=None, device: warp.DeviceLike=None, pinned: builtins.bool=False, copy: builtins.bool=True, deleter: Callable[[builtins.int, builtins.int], None] | None=None, ndim: builtins.int | None=None, grad: array | None=None, requires_grad: builtins.bool=False, retain_grad: builtins.bool=False) -> None:
+    def __init__[S: IntTuple](self: array[Any, S], data: None=None, dtype: Any=Any, *, shape: IntTupleOrList[S], strides: tuple[builtins.int, ...] | None=None, ptr: builtins.int | uint64 | None=None, capacity: builtins.int | None=None, device: warp.DeviceLike=None, pinned: builtins.bool=False, copy: builtins.bool=True, deleter: Callable[[builtins.int, builtins.int], None] | None=None, ndim: builtins.int | None=None, grad: array | None=None, requires_grad: builtins.bool=False, retain_grad: builtins.bool=False) -> None:
         """Construct a new Warp array object.
 
         When the ``data`` argument is a valid list, tuple, or ndarray the array will be constructed from this object's data.
@@ -1876,7 +1879,7 @@ class array[DType, Shape: IntTuple = IntTuple](Array[DType, Shape]):
         ...
 
     @overload
-    def __init__[D, N: IntVar](self: array[D, [N]], data: None=None, *, dtype: type[D], shape: _Int[N], strides: tuple[builtins.int, ...] | None=None, ptr: builtins.int | None=None, capacity: builtins.int | None=None, device: warp.DeviceLike=None, pinned: builtins.bool=False, copy: builtins.bool=True, deleter: Callable[[builtins.int, builtins.int], None] | None=None, ndim: builtins.int | None=None, grad: array | None=None, requires_grad: builtins.bool=False, retain_grad: builtins.bool=False) -> None:
+    def __init__[D, N: IntVar](self: array[D, [N]], data: None=None, *, dtype: type[D], shape: _Int[N], strides: tuple[builtins.int, ...] | None=None, ptr: builtins.int | uint64 | None=None, capacity: builtins.int | None=None, device: warp.DeviceLike=None, pinned: builtins.bool=False, copy: builtins.bool=True, deleter: Callable[[builtins.int, builtins.int], None] | None=None, ndim: builtins.int | None=None, grad: array | None=None, requires_grad: builtins.bool=False, retain_grad: builtins.bool=False) -> None:
         """Construct a new Warp array object.
 
         When the ``data`` argument is a valid list, tuple, or ndarray the array will be constructed from this object's data.
@@ -1920,7 +1923,95 @@ class array[DType, Shape: IntTuple = IntTuple](Array[DType, Shape]):
         ...
 
     @overload
-    def __init__[N: IntVar](self: array[Any, [N]], data: None=None, dtype: Any=Any, *, shape: _Int[N], strides: tuple[builtins.int, ...] | None=None, ptr: builtins.int | None=None, capacity: builtins.int | None=None, device: warp.DeviceLike=None, pinned: builtins.bool=False, copy: builtins.bool=True, deleter: Callable[[builtins.int, builtins.int], None] | None=None, ndim: builtins.int | None=None, grad: array | None=None, requires_grad: builtins.bool=False, retain_grad: builtins.bool=False) -> None:
+    def __init__[N: IntVar](self: array[Any, [N]], data: None=None, dtype: Any=Any, *, shape: _Int[N], strides: tuple[builtins.int, ...] | None=None, ptr: builtins.int | uint64 | None=None, capacity: builtins.int | None=None, device: warp.DeviceLike=None, pinned: builtins.bool=False, copy: builtins.bool=True, deleter: Callable[[builtins.int, builtins.int], None] | None=None, ndim: builtins.int | None=None, grad: array | None=None, requires_grad: builtins.bool=False, retain_grad: builtins.bool=False) -> None:
+        """Construct a new Warp array object.
+
+        When the ``data`` argument is a valid list, tuple, or ndarray the array will be constructed from this object's data.
+        For objects that are not stored sequentially in memory (e.g.: a list), then the data will first
+        be flattened before being transferred to the memory space given by device.
+
+        The second construction path occurs when the ``ptr`` argument is a non-zero uint64 value representing the
+        start address in memory where existing array data resides, e.g.: from an external or C-library. The memory
+        allocation should reside on the same device given by the device argument, and the user should set the length
+        and dtype parameter appropriately.
+
+        If neither ``data`` nor ``ptr`` are specified, the ``shape`` argument is checked next.
+        This construction path can be used to create new uninitialized arrays, but users are encouraged to call
+        ``wp.empty()``, ``wp.zeros()``, or ``wp.full()`` instead to create new arrays.
+
+        If none of the above arguments are specified, a simple type annotation is constructed.  This is used when annotating
+        kernel arguments or struct members (e.g., ``arr: wp.array[float]``).  In this case, only ``dtype`` and ``ndim``
+        are taken into account and no memory is allocated for the array.
+
+        Args:
+            data: An object to construct the array from, can be a Tuple, List, or generally any type convertible to an np.array
+            dtype: One of the available `data types <#data-types>`_, such as :class:`warp.float32`, :class:`warp.mat33`, or a custom `struct <#structs>`_. If dtype is ``Any`` and data is an ndarray, then it will be inferred from the array data type
+            shape: Dimensions of the array
+            strides: Number of bytes in each dimension between successive elements of the array
+            ptr: Address of the first element to alias (``data`` should be ``None``). This may point inside a larger
+                external allocation.
+            capacity: Maximum number of bytes addressable from ``ptr`` (``data`` should be ``None``).
+            device: Device the array lives on
+            copy: Whether the incoming ``data`` will be copied or aliased. Aliasing requires that
+                the incoming ``data`` already lives on the ``device`` specified and the data types match.
+            deleter: Function to be called when the array is deleted, taking two arguments: pointer and size
+            requires_grad: Whether or not gradients will be tracked for this array, see :class:`warp.Tape` for details
+            retain_grad: Whether to preserve the array's gradient during the backward pass instead of
+                zeroing it after it has been read. Requires ``requires_grad=True``.
+            grad: The array in which to accumulate gradients in the backward pass. If ``None`` and ``requires_grad`` is ``True``,
+                then a gradient array will be allocated automatically.
+            pinned: Whether to allocate pinned host memory, which allows asynchronous host–device transfers
+                (only applicable with ``device="cpu"``)
+
+        """
+        ...
+
+    @overload
+    def __init__[T, L, S: IntTuple](self: array[Vector[T, L], S], data: RegularNestedList[[*S, L], builtins.int | builtins.float], dtype: type[Vector[T, L]], shape: None=None, strides: tuple[builtins.int, ...] | None=None, ptr: None=None, capacity: builtins.int | None=None, device: warp.DeviceLike=None, pinned: builtins.bool=False, copy: builtins.bool=True, deleter: Callable[[builtins.int, builtins.int], None] | None=None, ndim: builtins.int | None=None, grad: array | None=None, requires_grad: builtins.bool=False, retain_grad: builtins.bool=False) -> None:
+        """Construct a new Warp array object.
+
+        When the ``data`` argument is a valid list, tuple, or ndarray the array will be constructed from this object's data.
+        For objects that are not stored sequentially in memory (e.g.: a list), then the data will first
+        be flattened before being transferred to the memory space given by device.
+
+        The second construction path occurs when the ``ptr`` argument is a non-zero uint64 value representing the
+        start address in memory where existing array data resides, e.g.: from an external or C-library. The memory
+        allocation should reside on the same device given by the device argument, and the user should set the length
+        and dtype parameter appropriately.
+
+        If neither ``data`` nor ``ptr`` are specified, the ``shape`` argument is checked next.
+        This construction path can be used to create new uninitialized arrays, but users are encouraged to call
+        ``wp.empty()``, ``wp.zeros()``, or ``wp.full()`` instead to create new arrays.
+
+        If none of the above arguments are specified, a simple type annotation is constructed.  This is used when annotating
+        kernel arguments or struct members (e.g., ``arr: wp.array[float]``).  In this case, only ``dtype`` and ``ndim``
+        are taken into account and no memory is allocated for the array.
+
+        Args:
+            data: An object to construct the array from, can be a Tuple, List, or generally any type convertible to an np.array
+            dtype: One of the available `data types <#data-types>`_, such as :class:`warp.float32`, :class:`warp.mat33`, or a custom `struct <#structs>`_. If dtype is ``Any`` and data is an ndarray, then it will be inferred from the array data type
+            shape: Dimensions of the array
+            strides: Number of bytes in each dimension between successive elements of the array
+            ptr: Address of the first element to alias (``data`` should be ``None``). This may point inside a larger
+                external allocation.
+            capacity: Maximum number of bytes addressable from ``ptr`` (``data`` should be ``None``).
+            device: Device the array lives on
+            copy: Whether the incoming ``data`` will be copied or aliased. Aliasing requires that
+                the incoming ``data`` already lives on the ``device`` specified and the data types match.
+            deleter: Function to be called when the array is deleted, taking two arguments: pointer and size
+            requires_grad: Whether or not gradients will be tracked for this array, see :class:`warp.Tape` for details
+            retain_grad: Whether to preserve the array's gradient during the backward pass instead of
+                zeroing it after it has been read. Requires ``requires_grad=True``.
+            grad: The array in which to accumulate gradients in the backward pass. If ``None`` and ``requires_grad`` is ``True``,
+                then a gradient array will be allocated automatically.
+            pinned: Whether to allocate pinned host memory, which allows asynchronous host–device transfers
+                (only applicable with ``device="cpu"``)
+
+        """
+        ...
+
+    @overload
+    def __init__[T, L, S: IntTuple](self: array[Vector[T, L], S], data: _HasShape[[*S, L]], dtype: type[Vector[T, L]], shape: None=None, strides: tuple[builtins.int, ...] | None=None, ptr: None=None, capacity: builtins.int | None=None, device: warp.DeviceLike=None, pinned: builtins.bool=False, copy: builtins.bool=True, deleter: Callable[[builtins.int, builtins.int], None] | None=None, ndim: builtins.int | None=None, grad: array | None=None, requires_grad: builtins.bool=False, retain_grad: builtins.bool=False) -> None:
         """Construct a new Warp array object.
 
         When the ``data`` argument is a valid list, tuple, or ndarray the array will be constructed from this object's data.
@@ -2140,7 +2231,7 @@ class array[DType, Shape: IntTuple = IntTuple](Array[DType, Shape]):
         ...
 
     @overload
-    def __init__(self: array[Any, IntTuple], data: list | tuple | np.ndarray | None=None, dtype: Any=Any, shape: builtins.int | tuple[builtins.int, ...] | list[builtins.int] | None=None, strides: tuple[builtins.int, ...] | None=None, ptr: builtins.int | None=None, capacity: builtins.int | None=None, device: warp.DeviceLike=None, pinned: builtins.bool=False, copy: builtins.bool=True, deleter: Callable[[builtins.int, builtins.int], None] | None=None, ndim: builtins.int | None=None, grad: array | None=None, requires_grad: builtins.bool=False, retain_grad: builtins.bool=False) -> None:
+    def __init__(self: array[Any, IntTuple], data: list | tuple | np.ndarray | None=None, dtype: Any=Any, shape: builtins.int | tuple[builtins.int, ...] | list[builtins.int] | None=None, strides: tuple[builtins.int, ...] | None=None, ptr: builtins.int | uint64 | None=None, capacity: builtins.int | None=None, device: warp.DeviceLike=None, pinned: builtins.bool=False, copy: builtins.bool=True, deleter: Callable[[builtins.int, builtins.int], None] | None=None, ndim: builtins.int | None=None, grad: array | None=None, requires_grad: builtins.bool=False, retain_grad: builtins.bool=False) -> None:
         """Construct a new Warp array object.
 
         When the ``data`` argument is a valid list, tuple, or ndarray the array will be constructed from this object's data.
@@ -3007,6 +3098,7 @@ class array[DType, Shape: IntTuple = IntTuple](Array[DType, Shape]):
 
     def __setitem__(self, key: Any, value: Any) -> None:
         ...
+    device: warp.Device
 array1d: TypeAlias = array[_ArrayDType, [int]]
 array2d: TypeAlias = array[_ArrayDType, [int, int]]
 array3d: TypeAlias = array[_ArrayDType, [int, int, int]]
