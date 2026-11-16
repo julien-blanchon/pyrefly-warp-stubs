@@ -322,8 +322,13 @@ where `example_diffusion_3d.py` passes 3D bounds to a 2D helper annotated
 - A list literal passed inline as an argument (`f(wp.array([0.5, 0.5]))`) is
   typed from the expected parameter and not checked against it; assigned to a
   variable first, it is.
-- `.w` on a 3-vector is not caught; the length from
-  `wp.types.vector(length=5, ...)` is widened to `int`.
+- `.w` on a 3-vector is not caught. `wp.types.vector` keeps literal lengths up
+  to 16 and `wp.types.matrix` literal dimensions up to 4; longer ones and
+  run-time sizes are `int` (or the caller's type variable).
+- A `@wp.struct` class is typed as the plain class (fields as attributes, the
+  no-argument constructor): Pyrefly ignores a class decorator's return type.
+  Narrow with `wp.types.type_is_struct(Cls)` / `wp.types.is_struct(value)` to
+  reach Warp's struct API (`Cls.vars`, `Cls.ctype`, `value.__ctype__()`).
 - `@wp.func` overloading by redefinition in *your* code: the checker sees the
   last definition only (the generator fixes this for Warp's own modules).
 - Results of `tile_map`, of field evaluations in `warp.fem`, and of builtins
@@ -346,6 +351,12 @@ where `example_diffusion_3d.py` passes 3D bounds to a 2D helper annotated
   - Calling an unspecialised generic alias (`self.x = wp.array2d(data)`)
     reports the alias's type variable as leaking (`invalid-type-var`), even with
     a `default=Any`.
+  - A literal solved through a type variable (`def vector[L: ...](length: L)`)
+    is widened to `int` where the built type annotates a decorated function's
+    parameter or an inferred attribute; one overload per literal avoids it.
+  - An unannotated function returning a generic call whose result holds a tuple
+    of generic class instances (`_Func[P, tuple[vec3, mat33]]`) infers their
+    type arguments as `Unknown`.
 
 ## Development
 
@@ -373,6 +384,11 @@ failures or new errors in `compare_examples.py`.
 
 ## Changelog
 
+- **0.1.3**: `wp.types.vector` / `wp.types.matrix` keep a literal length / shape
+  (`vector(length=12)` is `Vector[float, Literal[12]]`, `matrix(shape=(n, 3))` keeps its 3
+  columns, also where the built type annotates a `@wp.func` parameter or an attribute);
+  `wp.types.is_struct` / `type_is_struct` narrow to Warp's `StructInstance` / `Struct`
+  (`__ctype__()`, `vars`, `ctype`, `numpy_dtype()`).
 - **0.1.2**: host objects (`@wp.kernel` is a `Kernel`, `Launch`, graph capture, `BsrMatrix`,
   `Tape`, ...) and object-like kernel values (atomics, `wp.static`); integer operators on Warp
   integer scalars; scalar conversions from any number; `wp.ref[T]`; `wp.kernel(fn, **options)`;
