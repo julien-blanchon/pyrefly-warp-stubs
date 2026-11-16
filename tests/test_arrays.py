@@ -7,7 +7,7 @@ error); `test_*` functions run against the real Warp on the CPU, and their
 
 from __future__ import annotations
 
-from typing import Any, assert_type
+from typing import Any, Literal, assert_type
 
 import numpy as np
 import pytest
@@ -28,8 +28,8 @@ def check_creation(n: int) -> None:
     # A size that is only known at runtime keeps the rank.
     assert_type(wp.zeros(n, dtype=float), wp.array[float, [int]])
     assert_type(wp.zeros((n, 3), dtype=float), wp.array[float, [int, 3]])
-    # Types built by Warp's factories are vectors (the length is widened to `int`).
-    assert_type(wp.zeros(3, dtype=wp.types.vector(length=5, dtype=float)), wp.array[wp.Vector[float, int], [3]])
+    # Types built by Warp's factories are vectors of their literal length.
+    assert_type(wp.zeros(3, dtype=wp.types.vector(length=5, dtype=float)), wp.array[wp.Vector[float, Literal[5]], [3]])
 
 
 def check_constructor(data: np.ndarray, ptr: int) -> None:

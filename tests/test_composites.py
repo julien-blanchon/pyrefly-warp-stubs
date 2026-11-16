@@ -75,6 +75,40 @@ def check_host_values(t: wp.transform) -> None:
     assert_type([*t.p, *t.q], list[float])
 
 
+# Type factories keep a literal length / shape, also where the built type
+# annotates a `@wp.func` parameter or an inferred attribute.
+Lens = wp.types.vector(length=12, dtype=float)
+UvXform = wp.types.matrix(shape=(2, 3), dtype=wp.float32)
+
+
+@wp.func
+def affine(m: UvXform, uv: wp.vec2) -> wp.vec2:
+    p = m @ wp.vec3(uv[0], uv[1], 1.0)
+    return wp.vec2(p[0], p[1])
+
+
+class LensTable:
+    def __init__(self) -> None:
+        self.k = wp.zeros(2, dtype=Lens, device=DEVICE)
+
+
+def check_type_factories(n: int) -> None:
+    assert_type(Lens, type[wp.Vector[float, Literal[12]]])
+    assert_type(UvXform, type[wp.Matrix[float, Literal[2], Literal[3]]])
+    assert_type(affine(UvXform(), wp.vec2(0.5, 0.5)), wp.vec2)
+    assert_type(LensTable().k, wp.array[wp.Vector[float, Literal[12]], [2]])
+    rows = wp.types.matrix(shape=(n, 3), dtype=float)
+    assert_type(rows()[0], Vec3)  # a run-time row count keeps the literal columns
+    assert_type(wp.types.vector(length=n, dtype=float), type[wp.Vector[float, int]])
+    assert_type(wp.types.vector(length=40, dtype=float), type[wp.Vector[float, int]])
+    affine(wp.types.matrix(shape=(3, 3), dtype=wp.float32)(), wp.vec2(0.5, 0.5))  # E: Argument `Matrix[float, Literal[3], Literal[3]]` is not assignable to parameter `m`
+
+
+@wp.kernel(module="unique")
+def affine_kernel(m: wp.array1d[UvXform], out: wp.array1d[wp.vec2]):
+    out[0] = affine(m[0], wp.vec2(1.0, 2.0))
+
+
 @wp.kernel(module="unique")
 def composite_kernel(
     v: wp.array1d[wp.vec3], m: wp.array1d[wp.mat33], q: wp.array1d[wp.quat], s: wp.array1d[float], out: wp.array1d[wp.vec3]
@@ -111,3 +145,10 @@ def test_rejected_composites() -> None:
     v = wp.zeros(1, dtype=wp.vec3, device=DEVICE)
     assert_build_fails(bad_vector_product_kernel, v, wp.zeros(1, dtype=wp.vec3, device=DEVICE))
     assert_build_fails(bad_vector_shape_kernel, wp.zeros(1, dtype=wp.mat44, device=DEVICE), v, wp.zeros(1, dtype=wp.vec3, device=DEVICE))
+
+
+def test_type_factories() -> None:
+    m = wp.array(np.array([[[2.0, 0.0, 1.0], [0.0, 3.0, 0.0]]], dtype=np.float32), dtype=UvXform, device=DEVICE)
+    out = wp.zeros(1, dtype=wp.vec2, device=DEVICE)
+    wp.launch(affine_kernel, dim=1, inputs=[m, out], device=DEVICE)
+    np.testing.assert_allclose(out.numpy()[0], [3.0, 6.0])

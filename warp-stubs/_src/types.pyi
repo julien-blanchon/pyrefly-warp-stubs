@@ -26,6 +26,9 @@ import warp.config
 from warp._src.logger import log_warning
 from shape_extensions import Flag, Index, IntTuple, IntTupleOrList, IntVar, RegularNestedList, index_shape
 from shape_extensions import Int as _Int
+from typing_extensions import TypeIs
+from warp._src.codegen import Struct as _Struct
+from warp._src.codegen import StructInstance as _StructInstance
 from warp._shapes import flatten_shape, reshape_int_shape, reshape_shape, reverse_shape, transpose_shape
 _ARRAY_INTERFACE_EMPTY_DATA = ctypes.c_byte()
 T = TypeVar('T')
@@ -679,6 +682,86 @@ def _rbinary_op(self, op, x, t, cw=True):
     return t(*(warp._src.context.call_builtin_from_desc(desc, (b, a)) for a, b in zip(self, x, strict=True)))
 
 @overload
+def vector[S](length: Literal[1], dtype: type[S]) -> type[Vector[S, Literal[1]]]:
+    """Create a vector type with the given length and data type."""
+    ...
+
+@overload
+def vector[S](length: Literal[2], dtype: type[S]) -> type[Vector[S, Literal[2]]]:
+    """Create a vector type with the given length and data type."""
+    ...
+
+@overload
+def vector[S](length: Literal[3], dtype: type[S]) -> type[Vector[S, Literal[3]]]:
+    """Create a vector type with the given length and data type."""
+    ...
+
+@overload
+def vector[S](length: Literal[4], dtype: type[S]) -> type[Vector[S, Literal[4]]]:
+    """Create a vector type with the given length and data type."""
+    ...
+
+@overload
+def vector[S](length: Literal[5], dtype: type[S]) -> type[Vector[S, Literal[5]]]:
+    """Create a vector type with the given length and data type."""
+    ...
+
+@overload
+def vector[S](length: Literal[6], dtype: type[S]) -> type[Vector[S, Literal[6]]]:
+    """Create a vector type with the given length and data type."""
+    ...
+
+@overload
+def vector[S](length: Literal[7], dtype: type[S]) -> type[Vector[S, Literal[7]]]:
+    """Create a vector type with the given length and data type."""
+    ...
+
+@overload
+def vector[S](length: Literal[8], dtype: type[S]) -> type[Vector[S, Literal[8]]]:
+    """Create a vector type with the given length and data type."""
+    ...
+
+@overload
+def vector[S](length: Literal[9], dtype: type[S]) -> type[Vector[S, Literal[9]]]:
+    """Create a vector type with the given length and data type."""
+    ...
+
+@overload
+def vector[S](length: Literal[10], dtype: type[S]) -> type[Vector[S, Literal[10]]]:
+    """Create a vector type with the given length and data type."""
+    ...
+
+@overload
+def vector[S](length: Literal[11], dtype: type[S]) -> type[Vector[S, Literal[11]]]:
+    """Create a vector type with the given length and data type."""
+    ...
+
+@overload
+def vector[S](length: Literal[12], dtype: type[S]) -> type[Vector[S, Literal[12]]]:
+    """Create a vector type with the given length and data type."""
+    ...
+
+@overload
+def vector[S](length: Literal[13], dtype: type[S]) -> type[Vector[S, Literal[13]]]:
+    """Create a vector type with the given length and data type."""
+    ...
+
+@overload
+def vector[S](length: Literal[14], dtype: type[S]) -> type[Vector[S, Literal[14]]]:
+    """Create a vector type with the given length and data type."""
+    ...
+
+@overload
+def vector[S](length: Literal[15], dtype: type[S]) -> type[Vector[S, Literal[15]]]:
+    """Create a vector type with the given length and data type."""
+    ...
+
+@overload
+def vector[S](length: Literal[16], dtype: type[S]) -> type[Vector[S, Literal[16]]]:
+    """Create a vector type with the given length and data type."""
+    ...
+
+@overload
 def vector[S, L: builtins.int](length: L, dtype: type[S]) -> type[Vector[S, L]]:
     """Create a vector type with the given length and data type."""
     ...
@@ -686,6 +769,126 @@ def vector[S, L: builtins.int](length: L, dtype: type[S]) -> type[Vector[S, L]]:
 @overload
 def vector(length: builtins.int, dtype: Any) -> type[Vector[Any, Any]]:
     """Create a vector type with the given length and data type."""
+    ...
+
+@overload
+def matrix[S](shape: tuple[Literal[1], Literal[1]], dtype: type[S]) -> type[Matrix[S, Literal[1], Literal[1]]]:
+    """Create a matrix type with the given shape and data type."""
+    ...
+
+@overload
+def matrix[S](shape: tuple[Literal[1], Literal[2]], dtype: type[S]) -> type[Matrix[S, Literal[1], Literal[2]]]:
+    """Create a matrix type with the given shape and data type."""
+    ...
+
+@overload
+def matrix[S](shape: tuple[Literal[1], Literal[3]], dtype: type[S]) -> type[Matrix[S, Literal[1], Literal[3]]]:
+    """Create a matrix type with the given shape and data type."""
+    ...
+
+@overload
+def matrix[S](shape: tuple[Literal[1], Literal[4]], dtype: type[S]) -> type[Matrix[S, Literal[1], Literal[4]]]:
+    """Create a matrix type with the given shape and data type."""
+    ...
+
+@overload
+def matrix[S](shape: tuple[Literal[2], Literal[1]], dtype: type[S]) -> type[Matrix[S, Literal[2], Literal[1]]]:
+    """Create a matrix type with the given shape and data type."""
+    ...
+
+@overload
+def matrix[S](shape: tuple[Literal[2], Literal[2]], dtype: type[S]) -> type[Matrix[S, Literal[2], Literal[2]]]:
+    """Create a matrix type with the given shape and data type."""
+    ...
+
+@overload
+def matrix[S](shape: tuple[Literal[2], Literal[3]], dtype: type[S]) -> type[Matrix[S, Literal[2], Literal[3]]]:
+    """Create a matrix type with the given shape and data type."""
+    ...
+
+@overload
+def matrix[S](shape: tuple[Literal[2], Literal[4]], dtype: type[S]) -> type[Matrix[S, Literal[2], Literal[4]]]:
+    """Create a matrix type with the given shape and data type."""
+    ...
+
+@overload
+def matrix[S](shape: tuple[Literal[3], Literal[1]], dtype: type[S]) -> type[Matrix[S, Literal[3], Literal[1]]]:
+    """Create a matrix type with the given shape and data type."""
+    ...
+
+@overload
+def matrix[S](shape: tuple[Literal[3], Literal[2]], dtype: type[S]) -> type[Matrix[S, Literal[3], Literal[2]]]:
+    """Create a matrix type with the given shape and data type."""
+    ...
+
+@overload
+def matrix[S](shape: tuple[Literal[3], Literal[3]], dtype: type[S]) -> type[Matrix[S, Literal[3], Literal[3]]]:
+    """Create a matrix type with the given shape and data type."""
+    ...
+
+@overload
+def matrix[S](shape: tuple[Literal[3], Literal[4]], dtype: type[S]) -> type[Matrix[S, Literal[3], Literal[4]]]:
+    """Create a matrix type with the given shape and data type."""
+    ...
+
+@overload
+def matrix[S](shape: tuple[Literal[4], Literal[1]], dtype: type[S]) -> type[Matrix[S, Literal[4], Literal[1]]]:
+    """Create a matrix type with the given shape and data type."""
+    ...
+
+@overload
+def matrix[S](shape: tuple[Literal[4], Literal[2]], dtype: type[S]) -> type[Matrix[S, Literal[4], Literal[2]]]:
+    """Create a matrix type with the given shape and data type."""
+    ...
+
+@overload
+def matrix[S](shape: tuple[Literal[4], Literal[3]], dtype: type[S]) -> type[Matrix[S, Literal[4], Literal[3]]]:
+    """Create a matrix type with the given shape and data type."""
+    ...
+
+@overload
+def matrix[S](shape: tuple[Literal[4], Literal[4]], dtype: type[S]) -> type[Matrix[S, Literal[4], Literal[4]]]:
+    """Create a matrix type with the given shape and data type."""
+    ...
+
+@overload
+def matrix[S, R: builtins.int](shape: tuple[R, Literal[1]], dtype: type[S]) -> type[Matrix[S, R, Literal[1]]]:
+    """Create a matrix type with the given shape and data type."""
+    ...
+
+@overload
+def matrix[S, R: builtins.int](shape: tuple[R, Literal[2]], dtype: type[S]) -> type[Matrix[S, R, Literal[2]]]:
+    """Create a matrix type with the given shape and data type."""
+    ...
+
+@overload
+def matrix[S, R: builtins.int](shape: tuple[R, Literal[3]], dtype: type[S]) -> type[Matrix[S, R, Literal[3]]]:
+    """Create a matrix type with the given shape and data type."""
+    ...
+
+@overload
+def matrix[S, R: builtins.int](shape: tuple[R, Literal[4]], dtype: type[S]) -> type[Matrix[S, R, Literal[4]]]:
+    """Create a matrix type with the given shape and data type."""
+    ...
+
+@overload
+def matrix[S, C: builtins.int](shape: tuple[Literal[1], C], dtype: type[S]) -> type[Matrix[S, Literal[1], C]]:
+    """Create a matrix type with the given shape and data type."""
+    ...
+
+@overload
+def matrix[S, C: builtins.int](shape: tuple[Literal[2], C], dtype: type[S]) -> type[Matrix[S, Literal[2], C]]:
+    """Create a matrix type with the given shape and data type."""
+    ...
+
+@overload
+def matrix[S, C: builtins.int](shape: tuple[Literal[3], C], dtype: type[S]) -> type[Matrix[S, Literal[3], C]]:
+    """Create a matrix type with the given shape and data type."""
+    ...
+
+@overload
+def matrix[S, C: builtins.int](shape: tuple[Literal[4], C], dtype: type[S]) -> type[Matrix[S, Literal[4], C]]:
+    """Create a matrix type with the given shape and data type."""
     ...
 
 @overload
@@ -1403,9 +1606,9 @@ def type_is_value(t: Any) -> builtins.bool:
     """Return ``True`` if the type is a value type (scalar, vector, matrix, quaternion, or transformation)."""
     return t in value_types or type_is_composite(t)
 
-def type_is_struct(t: Any) -> builtins.bool:
+def type_is_struct(t: object) -> TypeIs[_Struct]:
     """Return ``True`` if the type is a Warp struct type."""
-    return isinstance(t, warp._src.codegen.Struct)
+    ...
 
 def type_is_array(t: Any) -> builtins.bool:
     """Return ``True`` if the type is one of the Warp array types."""
@@ -1455,9 +1658,9 @@ def is_value(x: Any) -> builtins.bool:
     """Return ``True`` if the value is a value type instance (scalar, vector, matrix, quaternion, or transformation)."""
     return isinstance(x, value_types) or is_composite(x) or type(x) in _native_value_types
 
-def is_struct(x) -> builtins.bool:
+def is_struct(x: object) -> TypeIs[_StructInstance]:
     """Return ``True`` if the value is a Warp struct instance."""
-    return isinstance(x, warp._src.codegen.StructInstance)
+    ...
 
 def is_array(x) -> builtins.bool:
     """Return ``True`` if the value is one of the Warp array type instances or annotations."""

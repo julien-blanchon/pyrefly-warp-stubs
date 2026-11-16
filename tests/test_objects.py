@@ -52,6 +52,18 @@ def bump_kernel(out: wp.array1d[int]):
     out[0] = c.n
 
 
+def check_structs(value: object) -> None:
+    # The decorated class is typed as the plain class (Pyrefly ignores a class
+    # decorator's return type); the predicates narrow to Warp's struct API.
+    assert_type(Counter().n, int)
+    Counter.vars  # E: Class `Counter` has no class attribute `vars`
+    if wp.types.type_is_struct(Counter):
+        assert_type(list(Counter.vars), list[str])
+    if wp.types.is_struct(value):
+        value.__ctype__()
+        value._cls  # E: Object of class `StructInstance` has no attribute `_cls`
+
+
 def check_kernels_and_launches(a: wp.array1d[float]) -> None:
     assert_type(scale_kernel, wp.Kernel)
     assert_type(wp.kernel(_scale, module="unique", enable_backward=False), wp.Kernel)
@@ -162,3 +174,11 @@ def test_host_reductions_and_objects() -> None:
     x = wp.array(np.arange(3, dtype=np.float32), dtype=float, device=DEVICE)
     assert A.nrow == 3
     np.testing.assert_allclose((A @ x).numpy(), [0.0, 1.0, 2.0])
+
+
+def test_structs() -> None:
+    assert wp.types.type_is_struct(Counter)
+    assert list(Counter.vars) == ["n"]
+    c = Counter()
+    assert wp.types.is_struct(c) and not wp.types.is_struct(Counter)
+    assert c.__ctype__().n == 0
